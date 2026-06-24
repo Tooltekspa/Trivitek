@@ -3320,6 +3320,9 @@ const App = (() => {
      ============================================================ */
   let live = { role:null, pin:null, name:null, poll:null, state:null, answered:false, lastPhaseKey:null, tickH:null, voter:null };
 
+  // Encuesta y Votación se tratan igual: anónimas, voto único, solo gana 1
+  const isVote = m => (m==='poll' || m==='survey');
+
   /* token de votante anónimo (1 voto por dispositivo) */
   function voterToken(pin){
     const k='trivitek_voter_'+pin;
@@ -3383,7 +3386,7 @@ const App = (() => {
   function renderHost(){
     const s=live.state; const box=$('screen-host'); if(!s){ box.innerHTML='<div class="waiting"><div class="spinner"></div></div>'; return; }
     const head = `<div class="editor-head"><button class="iconbtn" onclick="App.hostEnd()">✕</button><h2>${esc(s.emoji)} ${esc(s.title)}</h2></div>`;
-    if(s.mode==='poll'){ renderPollHost(box, head, s); return; }
+    if(isVote(s.mode)){ renderPollHost(box, head, s); return; }
     if(s.phase==='lobby'){
       const joinUrl = liveBaseUrl()+'?pin='+s.pin;
       const chips = (s.players||[]).map(p=>`<span class="pchip">${esc(p.name)}</span>`).join('') || '<span class="muted">Esperando jugadores…</span>';
@@ -3454,7 +3457,7 @@ const App = (() => {
           <div class="lbl">PIN</div><div class="pin-code" style="font-size:40px">${s.pin}</div>
         </div>
         <div class="big-q">${esc(q.text)}</div>
-        <div class="live-count">🗳️ ${s.votes||0} voto(s) recibido(s)</div>
+        <div class="live-count">${s.votes!=null?('🗳️ '+s.votes+' voto(s) recibido(s)'):'🗳️ Votación abierta'}</div>
         <div class="waiting" style="flex:0"><div class="answered-count">Votación abierta…</div></div>
         <div class="editor-foot live-host-foot">
           <button class="btn alt" style="width:100%;font-size:20px" onclick="App.hostAdvance()">Cerrar votación y ver ganador 🏆</button>
@@ -3536,7 +3539,7 @@ const App = (() => {
       // si es una votación anónima, entra directo sin pedir nombre
       try{
         live.pin=prefillPin; const s=await fetchSession();
-        if(s.ok && s.mode==='poll'){ enterPoll(prefillPin, s); return; }
+        if(s.ok && isVote(s.mode)){ enterPoll(prefillPin, s); return; }
       }catch(e){}
     }
     $('join-pin').value = prefillPin||''; $('join-name').value='';
@@ -3553,7 +3556,7 @@ const App = (() => {
     let s;
     try{ live.pin=pin; s=await fetchSession(); }catch(e){ toast('Error de conexión'); return; }
     if(!s.ok){ toast(s.error||'PIN no encontrado'); return; }
-    if(s.mode==='poll'){ enterPoll(pin, s); return; }   // votación anónima: sin nombre
+    if(isVote(s.mode)){ enterPoll(pin, s); return; }   // votación/encuesta anónima: sin nombre
     const name=$('join-name').value.trim();
     if(!name){ toast('Escribe tu nombre'); $('join-name').focus(); return; }
     try{
@@ -3582,7 +3585,7 @@ const App = (() => {
     if(getVoted(pin,qi)!=null) return;
     setVoted(pin,qi,choice); renderPlayer();   // optimista
     try{
-      const r=await apiPost({action:'answer', pin, voter:live.voter, choice});
+      const r=await apiPost({action:'answer', pin, name:live.voter, voter:live.voter, choice});
       if(!r.ok && !r.already) toast(r.error||'No se pudo votar');
     }catch(e){ toast('Sin conexión: no se registró el voto'); }
   }
@@ -3622,7 +3625,7 @@ const App = (() => {
     const s=live.state; const box=$('screen-live');
     const head=`<div class="editor-head"><button class="iconbtn" onclick="App.leaveLive()">←</button><h2>${esc(s?s.title:'Juego')}</h2></div>`;
     if(!s){ box.innerHTML=head+'<div class="waiting"><div class="spinner"></div><div>Conectando…</div></div>'; return; }
-    if(s.mode==='poll'){ renderPollPlayer(box, head, s); return; }
+    if(isVote(s.mode)){ renderPollPlayer(box, head, s); return; }
     if(s.phase==='lobby'){
       box.innerHTML=head+`<div class="you-tag">Eres: <b>${esc(live.name)}</b></div>
         <div class="waiting"><div class="spinner"></div><div class="display" style="font-size:22px">¡Estás dentro!</div>
