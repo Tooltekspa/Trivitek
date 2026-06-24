@@ -3470,13 +3470,22 @@ const App = (() => {
     }
   }
   function winnerHtml(s){
-    const rv=s.reveal||{}; 
-    if(!rv.totalVotes){ return `<div class="winner-card"><div class="crown">🗳️</div><div class="wname" style="color:#0e2c44">Sin votos</div></div>`; }
+    const rv=s.reveal||{};
+    let total=rv.totalVotes, wi=rv.winnerIndex, wv=rv.winnerVotes, wtext=rv.winnerText;
+    // Respaldo: si el backend mandó "counts" (estilo encuesta), calculamos el ganador aquí
+    if((wtext==null || total==null) && Array.isArray(rv.counts)){
+      const counts=rv.counts; total=counts.reduce((a,b)=>a+b,0);
+      wi=-1; wv=-1; counts.forEach((c,i)=>{ if(c>wv){ wv=c; wi=i; } });
+      const ans=(s.question && s.question.answers)||[];
+      wtext=(total>0 && wi>=0)? (ans[wi]||'') : '';
+      wv=total>0?wv:0;
+    }
+    if(!total){ return `<div class="winner-card"><div class="crown">🗳️</div><div class="wname" style="color:#0e2c44">Sin votos aún</div></div>`; }
     return `<div class="winner-card">
       <div class="crown">🏆</div>
       <div class="wlbl">GANADOR</div>
-      <div class="wname">${esc(rv.winnerText||'')}</div>
-      <div class="wvotes">${rv.winnerVotes} de ${rv.totalVotes} voto(s)</div>
+      <div class="wname">${esc(wtext||'')}</div>
+      <div class="wvotes">${wv} de ${total} voto(s)</div>
     </div>`;
   }
   function startHostTick(time, remaining){
