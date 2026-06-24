@@ -199,6 +199,9 @@
   .winner-card .wname{font-family:'Fredoka';font-size:clamp(24px,6.5vw,36px);margin:6px 0;color:#0081b0}
   .winner-card .wvotes{font-weight:800;opacity:.7}
   .tag.poll{background:#25638f;color:#fff}
+  .vote-wrap{display:flex;flex-direction:column;gap:0;margin-top:6px}
+  .vote-select{font-size:18px;padding:16px 14px;font-weight:700}
+  .vote-select option{font-weight:600}
   @media(max-width:520px){.ans-edit{grid-template-columns:1fr}}
 </style>
 </head>
@@ -3129,12 +3132,23 @@ const App = (() => {
     $('q-text').textContent=q.text;
     $('answered-note').style.display='none';
     const box=$('answers'); box.innerHTML='';
-    q.answers.forEach((a,ai)=>{
-      const b=document.createElement('button'); b.className='answer c'+ai;
-      b.innerHTML=`<span class="shape">${SHAPES[ai]}</span><span>${esc(a)}</span><span class="pct"></span>`;
-      b.onclick=()=>pickAnswer(ai);
-      box.appendChild(b);
-    });
+    if(q.answers.length>4){
+      box.style.display='block';
+      const wrap=document.createElement('div'); wrap.className='vote-wrap';
+      const sel=document.createElement('select'); sel.className='vote-select'; sel.id='local-select';
+      sel.innerHTML=`<option value="" disabled selected>— Elige una opción —</option>`+q.answers.map((a,i)=>`<option value="${i}">${esc(a)}</option>`).join('');
+      const btn=document.createElement('button'); btn.className='btn'; btn.style.cssText='width:100%;font-size:20px;margin-top:12px'; btn.textContent='Responder ✅';
+      btn.onclick=()=>{ const v=sel.value; if(v===''){ toast('Elige una opción'); return; } pickAnswer(Number(v)); };
+      wrap.appendChild(sel); wrap.appendChild(btn); box.appendChild(wrap);
+    } else {
+      box.style.display='';
+      q.answers.forEach((a,ai)=>{
+        const b=document.createElement('button'); b.className='answer c'+ai;
+        b.innerHTML=`<span class="shape">${SHAPES[ai]}</span><span>${esc(a)}</span><span class="pct"></span>`;
+        b.onclick=()=>pickAnswer(ai);
+        box.appendChild(b);
+      });
+    }
     go('question');
     // timer (encuestas: sin tiempo)
     clearInterval(g.timerH);
@@ -3542,10 +3556,12 @@ const App = (() => {
     }catch(e){ toast('Error de conexión'); }
   }
   async function playerTick(){
-    try{ const s=await fetchSession(); if(!s.ok){ return; } 
+    try{ const s=await fetchSession(); if(!s.ok){ return; }
       const key = s.phase+':'+s.qIndex;
-      if(key!==live.lastPhaseKey){ live.lastPhaseKey=key; if(s.phase==='question') live.answered=false; }
-      live.state=s; renderPlayer();
+      const changed = key!==live.lastPhaseKey;
+      if(changed){ live.lastPhaseKey=key; if(s.phase==='question') live.answered=false; }
+      live.state=s;
+      if(changed) renderPlayer();   // solo redibuja al cambiar de fase, no reinicia la selección
     }catch(e){}
   }
   async function submitLiveAnswer(choice){
@@ -3580,8 +3596,14 @@ const App = (() => {
       }
       box.innerHTML=head+`<div class="big-q">${esc(q.text)}</div>
         <div class="muted center" style="margin-bottom:8px">Elige una opción · voto anónimo, una sola vez</div>
-        <div class="poll-list" id="poll-list">${(q.answers||[]).map((a,i)=>`<button class="poll-opt" data-i="${i}">${esc(a)}</button>`).join('')}</div>`;
-      box.querySelectorAll('#poll-list .poll-opt').forEach(b=>b.onclick=()=>submitPollVote(Number(b.dataset.i)));
+        <div class="vote-wrap">
+          <select class="vote-select" id="poll-select">
+            <option value="" disabled selected>— Elige una opción —</option>
+            ${(q.answers||[]).map((a,i)=>`<option value="${i}">${esc(a)}</option>`).join('')}
+          </select>
+          <button class="btn" id="poll-vote-btn" style="width:100%;font-size:20px;margin-top:12px">Votar 🗳️</button>
+        </div>`;
+      $('poll-vote-btn').onclick=()=>{ const v=$('poll-select').value; if(v==='') { toast('Elige una opción'); return; } submitPollVote(Number(v)); };
       return;
     }
     // reveal / final -> ganador
@@ -3603,6 +3625,20 @@ const App = (() => {
       const q=s.question||{};
       if(live.answered){
         box.innerHTML=head+`<div class="waiting"><div class="answered-note" style="display:block">✅ ¡Respuesta enviada!</div><div class="muted">Espera el resultado…</div></div>`;
+        return;
+      }
+      const many=(q.answers||[]).length>4;
+      if(many){
+        box.innerHTML=head+`<div class="you-tag">${esc(live.name)} · Pregunta ${s.qIndex+1}/${s.qCount}</div>
+          <div class="big-q">${esc(q.text)}</div>
+          <div class="vote-wrap">
+            <select class="vote-select" id="live-select">
+              <option value="" disabled selected>— Elige una opción —</option>
+              ${(q.answers||[]).map((a,i)=>`<option value="${i}">${esc(a)}</option>`).join('')}
+            </select>
+            <button class="btn" id="live-send-btn" style="width:100%;font-size:20px;margin-top:12px">Responder ✅</button>
+          </div>`;
+        $('live-send-btn').onclick=()=>{ const v=$('live-select').value; if(v===''){ toast('Elige una opción'); return; } submitLiveAnswer(Number(v)); };
         return;
       }
       box.innerHTML=head+`<div class="you-tag">${esc(live.name)} · Pregunta ${s.qIndex+1}/${s.qCount}</div>
