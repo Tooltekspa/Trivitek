@@ -189,6 +189,16 @@
   .waiting{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center}
   .spinner{width:46px;height:46px;border:5px solid rgba(255,255,255,.25);border-top-color:#fff;border-radius:50%;animation:spin 1s linear infinite}
   @keyframes spin{to{transform:rotate(360deg)}}
+  /* ---------- POLL (votación lista/anónima) ---------- */
+  .poll-list{display:flex;flex-direction:column;gap:8px;max-height:62vh;overflow-y:auto;padding:4px;flex:1;-webkit-overflow-scrolling:touch}
+  .poll-opt{background:#fff;color:#0e2c44;border-radius:12px;padding:14px 16px;font-size:16px;font-weight:800;text-align:left;box-shadow:var(--shadow);width:100%}
+  .poll-opt:active{transform:translateY(2px)}
+  .winner-card{background:#fff;color:#0e2c44;border-radius:18px;padding:28px 20px;text-align:center;box-shadow:var(--shadow);margin-top:14px}
+  .winner-card .crown{font-size:50px;line-height:1}
+  .winner-card .wlbl{font-weight:800;letter-spacing:2px;font-size:12px;opacity:.55;margin-top:6px}
+  .winner-card .wname{font-family:'Fredoka';font-size:clamp(24px,6.5vw,36px);margin:6px 0;color:#0081b0}
+  .winner-card .wvotes{font-weight:800;opacity:.7}
+  .tag.poll{background:#25638f;color:#fff}
   @media(max-width:520px){.ans-edit{grid-template-columns:1fr}}
 </style>
 </head>
@@ -260,6 +270,7 @@
           <select id="ed-mode" onchange="App.touch()">
             <option value="quiz">Quiz (hay respuesta correcta + puntaje)</option>
             <option value="survey">Encuesta (sin correcta, solo votos)</option>
+            <option value="poll">Votación (lista, anónima, 1 voto, solo gana 1)</option>
           </select>
         </div>
         <div style="width:130px">
@@ -2817,7 +2828,7 @@ const App = (() => {
         <div class="ico">${esc(q.emoji||'🎯')}</div>
         <div class="meta">
           <b>${esc(q.title||'Sin título')}</b>
-          <small>${q.questions.length} pregunta(s) · <span class="tag ${q.mode}">${q.mode==='survey'?'Encuesta':'Quiz'}</span></small>
+          <small>${q.questions.length} pregunta(s) · <span class="tag ${q.mode}">${q.mode==='survey'?'Encuesta':(q.mode==='poll'?'Votación':'Quiz')}</span></small>
         </div>
         <button class="iconbtn" title="Jugar">▶</button>`;
       const act=()=>play(q.id);
@@ -2875,7 +2886,7 @@ const App = (() => {
         <div class="ico">${esc(q.emoji||'🎯')}</div>
         <div class="meta">
           <b>${esc(q.title||'Sin título')}</b>
-          <small>${q.questions.length} pregunta(s) · <span class="tag ${q.mode}">${q.mode==='survey'?'Encuesta':'Quiz'}</span></small>
+          <small>${q.questions.length} pregunta(s) · <span class="tag ${q.mode}">${q.mode==='survey'?'Encuesta':(q.mode==='poll'?'Votación':'Quiz')}</span></small>
         </div>
         <button class="iconbtn" title="Editar">✏️</button>
         <button class="iconbtn" title="Duplicar">⧉</button>
@@ -2940,7 +2951,8 @@ const App = (() => {
     e.questions.forEach((q,qi)=>wrap.appendChild(questionCard(q,qi)));
   }
   function questionCard(q,qi){
-    const isSurvey = $('ed-mode').value==='survey' || state.editing.mode==='survey';
+    const m = $('ed-mode').value || state.editing.mode;
+    const isSurvey = (m==='survey' || m==='poll');
     const card=document.createElement('div'); card.className='card qcard';
     const ansHtml=q.answers.map((a,ai)=>`
       <div class="ae c${ai}">
@@ -3001,7 +3013,7 @@ const App = (() => {
     e.questions.forEach(q=>{
       const keep=[]; let newCorrect=q.correct;
       q.answers.forEach((a,i)=>{ if(a.trim()){ keep.push(a.trim()); if(i===q.correct) newCorrect=keep.length-1; } });
-      q.answers=keep; q.correct=e.mode==='survey'?-1:Math.min(newCorrect,keep.length-1);
+      q.answers=keep; q.correct=(e.mode==='survey'||e.mode==='poll')?-1:Math.min(newCorrect,keep.length-1);
     });
     const idx=state.quizzes.findIndex(x=>x.id===e.id);
     if(idx>=0) state.quizzes[idx]=e; else state.quizzes.push(e);
@@ -3292,7 +3304,16 @@ const App = (() => {
   /* ============================================================
      JUEGO EN VIVO (host + jugadores con PIN/QR)  — sobre GAS
      ============================================================ */
-  let live = { role:null, pin:null, name:null, poll:null, state:null, answered:false, lastPhaseKey:null, tickH:null };
+  let live = { role:null, pin:null, name:null, poll:null, state:null, answered:false, lastPhaseKey:null, tickH:null, voter:null };
+
+  /* token de votante anónimo (1 voto por dispositivo) */
+  function voterToken(pin){
+    const k='trivitek_voter_'+pin;
+    try{ let t=localStorage.getItem(k); if(!t){ t='v'+Math.random().toString(36).slice(2)+Date.now().toString(36); localStorage.setItem(k,t);} return t; }
+    catch(e){ if(!live._v) live._v='v'+Math.random().toString(36).slice(2); return live._v; }
+  }
+  function getVoted(pin,qi){ try{ const v=localStorage.getItem('trivitek_voted_'+pin+'_'+qi); return v==null?null:Number(v); }catch(e){ return (live._voted&&live._voted[qi]!=null)?live._voted[qi]:null; } }
+  function setVoted(pin,qi,c){ try{ localStorage.setItem('trivitek_voted_'+pin+'_'+qi,String(c)); }catch(e){ live._voted=live._voted||{}; live._voted[qi]=c; } }
 
   function liveBaseUrl(){ return location.href.split('?')[0].split('#')[0]; }
   function stopLive(){
@@ -3348,6 +3369,7 @@ const App = (() => {
   function renderHost(){
     const s=live.state; const box=$('screen-host'); if(!s){ box.innerHTML='<div class="waiting"><div class="spinner"></div></div>'; return; }
     const head = `<div class="editor-head"><button class="iconbtn" onclick="App.hostEnd()">✕</button><h2>${esc(s.emoji)} ${esc(s.title)}</h2></div>`;
+    if(s.mode==='poll'){ renderPollHost(box, head, s); return; }
     if(s.phase==='lobby'){
       const joinUrl = liveBaseUrl()+'?pin='+s.pin;
       const chips = (s.players||[]).map(p=>`<span class="pchip">${esc(p.name)}</span>`).join('') || '<span class="muted">Esperando jugadores…</span>';
@@ -3395,6 +3417,54 @@ const App = (() => {
       return;
     }
   }
+  function renderPollHost(box, head, s){
+    const joinUrl = liveBaseUrl()+'?pin='+s.pin;
+    if(s.phase==='lobby'){
+      box.innerHTML = head + `
+        <div class="pin-box">
+          <div class="lbl">PIN DE LA VOTACIÓN</div>
+          <div class="pin-code">${s.pin}</div>
+          <div class="qr-wrap"><img src="${qrDataUrl(joinUrl)}" alt="QR"></div>
+          <div class="muted" style="font-size:13px">Votación anónima · cada persona vota una vez</div>
+          <div class="join-link">${esc(joinUrl)}</div>
+        </div>
+        <div class="editor-foot live-host-foot">
+          <button class="btn" style="width:100%;font-size:22px" onclick="App.hostAdvance()">Abrir votación 🗳️</button>
+        </div>`;
+      return;
+    }
+    if(s.phase==='question'){
+      const q=s.question||{};
+      box.innerHTML = head + `
+        <div class="pin-box">
+          <div class="lbl">PIN</div><div class="pin-code" style="font-size:40px">${s.pin}</div>
+        </div>
+        <div class="big-q">${esc(q.text)}</div>
+        <div class="live-count">🗳️ ${s.votes||0} voto(s) recibido(s)</div>
+        <div class="waiting" style="flex:0"><div class="answered-count">Votación abierta…</div></div>
+        <div class="editor-foot live-host-foot">
+          <button class="btn alt" style="width:100%;font-size:20px" onclick="App.hostAdvance()">Cerrar votación y ver ganador 🏆</button>
+        </div>`;
+      return;
+    }
+    if(s.phase==='reveal' || s.phase==='final'){
+      box.innerHTML = head + winnerHtml(s) + `
+        <div class="editor-foot live-host-foot">
+          <button class="btn" style="width:100%;font-size:20px" onclick="App.${s.qIndex>=s.qCount-1?'hostEnd':'hostAdvance'}()">${s.qIndex>=s.qCount-1?'Terminar':'Siguiente →'}</button>
+        </div>`;
+      return;
+    }
+  }
+  function winnerHtml(s){
+    const rv=s.reveal||{}; 
+    if(!rv.totalVotes){ return `<div class="winner-card"><div class="crown">🗳️</div><div class="wname" style="color:#0e2c44">Sin votos</div></div>`; }
+    return `<div class="winner-card">
+      <div class="crown">🏆</div>
+      <div class="wlbl">GANADOR</div>
+      <div class="wname">${esc(rv.winnerText||'')}</div>
+      <div class="wvotes">${rv.winnerVotes} de ${rv.totalVotes} voto(s)</div>
+    </div>`;
+  }
   function startHostTick(time, remaining){
     if(live.tickH) clearInterval(live.tickH);
     if(!time) return;
@@ -3437,14 +3507,31 @@ const App = (() => {
   }
 
   /* ---------- JUGADOR ---------- */
-  function joinEntry(prefillPin){
+  async function joinEntry(prefillPin){
     if(!cloud()){ toast('El modo en vivo necesita el backend configurado'); return; }
+    if(prefillPin){
+      // si es una votación anónima, entra directo sin pedir nombre
+      try{
+        live.pin=prefillPin; const s=await fetchSession();
+        if(s.ok && s.mode==='poll'){ enterPoll(prefillPin, s); return; }
+      }catch(e){}
+    }
     $('join-pin').value = prefillPin||''; $('join-name').value='';
     go('join'); setTimeout(()=>$( prefillPin?'join-name':'join-pin').focus(),100);
   }
+  function enterPoll(pin, s){
+    resetLive(); live.role='player'; live.pin=pin; live.voter=voterToken(pin); live.state=s;
+    go('live'); renderPlayer();
+    live.poll = setInterval(playerTick, 1800);
+  }
   async function joinGame(){
-    const pin=$('join-pin').value.trim(); const name=$('join-name').value.trim();
+    const pin=$('join-pin').value.trim();
     if(pin.length<4){ toast('Escribe el PIN'); return; }
+    let s;
+    try{ live.pin=pin; s=await fetchSession(); }catch(e){ toast('Error de conexión'); return; }
+    if(!s.ok){ toast(s.error||'PIN no encontrado'); return; }
+    if(s.mode==='poll'){ enterPoll(pin, s); return; }   // votación anónima: sin nombre
+    const name=$('join-name').value.trim();
     if(!name){ toast('Escribe tu nombre'); $('join-name').focus(); return; }
     try{
       const r = await apiPost({action:'join', pin, name});
@@ -3465,11 +3552,46 @@ const App = (() => {
     if(live.answered) return; live.answered=true; renderPlayer();
     try{ await apiPost({action:'answer', pin:live.pin, name:live.name, choice}); }catch(e){ toast('No se pudo enviar'); }
   }
+  async function submitPollVote(choice){
+    const pin=live.pin, qi=live.state.qIndex;
+    if(getVoted(pin,qi)!=null) return;
+    setVoted(pin,qi,choice); renderPlayer();   // optimista
+    try{
+      const r=await apiPost({action:'answer', pin, voter:live.voter, choice});
+      if(!r.ok && !r.already) toast(r.error||'No se pudo votar');
+    }catch(e){ toast('Sin conexión: no se registró el voto'); }
+  }
   function leaveLive(){ resetLive(); go('home'); }
+  function renderPollPlayer(box, head, s){
+    if(s.phase==='lobby'){
+      box.innerHTML=head+`<div class="waiting"><div class="spinner"></div>
+        <div class="display" style="font-size:22px">🗳️ Votación anónima</div>
+        <div class="muted">Esperando que el anfitrión abra la votación…</div></div>`;
+      return;
+    }
+    if(s.phase==='question'){
+      const q=s.question||{}; const voted=getVoted(live.pin, s.qIndex);
+      if(voted!=null){
+        const ch=(q.answers||[])[voted]||'';
+        box.innerHTML=head+`<div class="big-q">${esc(q.text)}</div>
+          <div class="answered-note" style="display:block">✅ Tu voto quedó registrado:<br><b>${esc(ch)}</b></div>
+          <div class="muted center" style="margin-top:10px">Voto anónimo · solo puedes votar una vez</div>`;
+        return;
+      }
+      box.innerHTML=head+`<div class="big-q">${esc(q.text)}</div>
+        <div class="muted center" style="margin-bottom:8px">Elige una opción · voto anónimo, una sola vez</div>
+        <div class="poll-list" id="poll-list">${(q.answers||[]).map((a,i)=>`<button class="poll-opt" data-i="${i}">${esc(a)}</button>`).join('')}</div>`;
+      box.querySelectorAll('#poll-list .poll-opt').forEach(b=>b.onclick=()=>submitPollVote(Number(b.dataset.i)));
+      return;
+    }
+    // reveal / final -> ganador
+    box.innerHTML=head+winnerHtml(s)+`<div class="muted center" style="margin-top:12px">¡Gracias por votar!</div>`;
+  }
   function renderPlayer(){
     const s=live.state; const box=$('screen-live');
     const head=`<div class="editor-head"><button class="iconbtn" onclick="App.leaveLive()">←</button><h2>${esc(s?s.title:'Juego')}</h2></div>`;
     if(!s){ box.innerHTML=head+'<div class="waiting"><div class="spinner"></div><div>Conectando…</div></div>'; return; }
+    if(s.mode==='poll'){ renderPollPlayer(box, head, s); return; }
     if(s.phase==='lobby'){
       box.innerHTML=head+`<div class="you-tag">Eres: <b>${esc(live.name)}</b></div>
         <div class="waiting"><div class="spinner"></div><div class="display" style="font-size:22px">¡Estás dentro!</div>
