@@ -3114,7 +3114,7 @@ const App = (() => {
     const g=state.game; const q=g.quiz.questions[g.qIndex];
     const multi = g.players.length>1 && g.quiz.mode==='quiz';
     $('ready-q').textContent = `Pregunta ${g.qIndex+1} de ${g.quiz.questions.length}`;
-    $('ready-player').textContent = multi ? `Turno de ${g.players[g.turn].name}` : (g.quiz.mode==='survey'?'¡A votar!':'¡Prepárate!');
+    $('ready-player').textContent = multi ? `Turno de ${g.players[g.turn].name}` : (isVote(g.quiz.mode)?'¡A votar!':'¡Prepárate!');
     go('ready');
     let n=3; $('count-num').textContent=n;
     const h=setInterval(()=>{
@@ -3152,7 +3152,7 @@ const App = (() => {
     go('question');
     // timer (encuestas: sin tiempo)
     clearInterval(g.timerH);
-    if(g.quiz.mode==='survey' || !q.time){
+    if(isVote(g.quiz.mode) || !q.time){
       $('timer').textContent='∞'; g.tRemain=null;
     } else {
       g.tRemain=q.time; g.tStart=Date.now(); $('timer').textContent=q.time;
@@ -3166,7 +3166,7 @@ const App = (() => {
 
   function pickAnswer(ai){
     const g=state.game; const q=g.quiz.questions[g.qIndex];
-    if(g.quiz.mode==='survey'){
+    if(isVote(g.quiz.mode)){
       // contar voto y avanzar al siguiente votante o revelar
       q._votes=q._votes||q.answers.map(()=>0);
       q._votes[ai]++;
@@ -3206,7 +3206,7 @@ const App = (() => {
   }
   function timeUp(){
     const g=state.game;
-    if(g.quiz.mode==='survey'){ revealSurvey(); return; }
+    if(isVote(g.quiz.mode)){ revealSurvey(); return; }
     const multi=g.players.length>1;
     if(multi){
       // jugador actual no respondió -> 0, pasar
@@ -3243,13 +3243,24 @@ const App = (() => {
   function revealSurvey(){
     const g=state.game; const q=g.quiz.questions[g.qIndex];
     const votes=q._votes||q.answers.map(()=>0);
-    const total=votes.reduce((a,b)=>a+b,0)||1;
+    const total=votes.reduce((a,b)=>a+b,0);
+    const body=$('reveal-body'); body.innerHTML='';
+    if(g.quiz.mode==='poll'){
+      // votación: solo el ganador
+      let wi=-1,wv=-1; votes.forEach((c,i)=>{ if(c>wv){wv=c;wi=i;} });
+      $('reveal-banner').textContent=''; $('reveal-banner').className='reveal-banner good';
+      body.innerHTML = (total>0&&wi>=0)
+        ? `<div class="winner-card"><div class="crown">🏆</div><div class="wlbl">GANADOR</div><div class="wname">${esc(q.answers[wi])}</div><div class="wvotes">${wv} de ${total} voto(s)</div></div>`
+        : `<div class="winner-card"><div class="crown">🗳️</div><div class="wname" style="color:#0e2c44">Sin votos</div></div>`;
+      $('reveal-next').textContent=(g.qIndex>=g.quiz.questions.length-1)?'Terminar 🎉':'Siguiente →';
+      go('reveal'); return;
+    }
+    const tot=total||1;
     $('reveal-banner').textContent='📊 Resultados de la votación';
     $('reveal-banner').className='reveal-banner good';
-    const body=$('reveal-body'); body.innerHTML='';
     const wrap=document.createElement('div'); wrap.className='survey-results';
     q.answers.forEach((a,ai)=>{
-      const pct=Math.round(votes[ai]/total*100);
+      const pct=Math.round(votes[ai]/tot*100);
       const row=document.createElement('div'); row.className='sbar';
       row.innerHTML=`<div class="fill c${ai}" style="width:0%"><span>${SHAPES[ai]} ${esc(a)}</span><span>${votes[ai]} (${pct}%)</span></div>`;
       wrap.appendChild(row);
@@ -3262,10 +3273,10 @@ const App = (() => {
   function afterReveal(){
     const g=state.game;
     if(g.qIndex>=g.quiz.questions.length-1){
-      if(g.quiz.mode==='survey'){ go('home'); toast('¡Gracias por votar! 🎉'); return; }
+      if(isVote(g.quiz.mode)){ go('home'); toast('¡Gracias por votar! 🎉'); return; }
       showFinal();
     } else {
-      if(g.quiz.mode==='survey') nextQuestion();
+      if(isVote(g.quiz.mode)) nextQuestion();
       else showScoreboard();
     }
   }
