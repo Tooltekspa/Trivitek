@@ -2802,7 +2802,34 @@ const App = (() => {
     // deep-link: ?pin=XXXXXX abre la pantalla de unirse
     try{
       const pin = new URLSearchParams(location.search).get('pin');
-      if(pin && cloud()){ joinEntry(pin); }
+      if(pin && cloud()){ joinEntry(pin); return; }
+    }catch(e){}
+    // reanudar sesión de host si la página se cerró con una votación/partida activa
+    if(cloud()) tryResumeHost();
+  }
+  async function tryResumeHost(){
+    let saved=null, key='';
+    try{
+      saved = JSON.parse(localStorage.getItem('trivitek_host_session')||'null');
+      key = localStorage.getItem('trivitek_adminkey')||'';
+    }catch(e){}
+    if(!saved || !saved.pin || !key) return;
+    // sesiones de más de 12 horas se descartan
+    if(saved.ts && (Date.now()-saved.ts) > 12*3600*1000){ clearHostSession(); return; }
+    try{
+      // validar la clave guardada
+      const auth = await apiPost({action:'auth', adminKey:key});
+      if(!auth.ok){ try{localStorage.removeItem('trivitek_adminkey');}catch(e){} return; }
+      isAdmin=true; adminKey=key;
+      // verificar que la sesión siga viva en el backend
+      live.pin=saved.pin;
+      const s = await fetchSession();
+      live.pin=null;
+      if(!s.ok || s.phase==='final'){ clearHostSession(); return; }
+      if(confirm('Tienes una sesión activa con PIN '+saved.pin+'. ¿Quieres reanudarla? Los participantes conectados podrán seguir votando con el mismo PIN.')){
+        resumeHost(saved.pin);
+      }
+      // si dice que no, NO se borra: podrá reanudarla en la próxima recarga o terminarla desde dentro
     }catch(e){}
   }
   function buildBg(){
@@ -2856,7 +2883,7 @@ const App = (() => {
     if(cloud()){
       try{
         const r = await apiPost({action:'auth', adminKey:v});
-        if(r.ok){ isAdmin=true; adminKey=v; renderAdminList(); go('admin'); $('admin-pin').value=''; }
+        if(r.ok){ isAdmin=true; adminKey=v; try{localStorage.setItem('trivitek_adminkey',v);}catch(e){} renderAdminList(); go('admin'); $('admin-pin').value=''; }
         else { toast('Clave incorrecta'); $('admin-pin').value=''; $('admin-pin').focus(); }
       }catch(e){ toast('Error de conexión con el servidor'); }
     } else {
@@ -2864,7 +2891,7 @@ const App = (() => {
       else { toast('PIN incorrecto'); $('admin-pin').value=''; $('admin-pin').focus(); }
     }
   }
-  function adminLogout(){ isAdmin=false; adminKey=''; renderLibrary(); go('home'); }
+  function adminLogout(){ isAdmin=false; adminKey=''; try{localStorage.removeItem('trivitek_adminkey');}catch(e){} renderLibrary(); go('home'); }
   function changePinPrompt(){
     if(cloud()){
       alert('En modo nube la clave de administrador se cambia en el código de Apps Script (constante ADMIN_KEY) y se vuelve a implementar.');
@@ -3383,12 +3410,23 @@ const App = (() => {
       const r = await apiPost({action:'createSession', adminKey, quizId});
       if(!r.ok){ toast(r.error||'No se pudo crear la sala'); return; }
       resetLive(); live.role='host'; live.pin=r.pin;
+      try{localStorage.setItem('trivitek_host_session', JSON.stringify({pin:r.pin, ts:Date.now()}));}catch(e){}
       go('host');
       const first = await fetchSession(); if(first.ok) live.state=first;
       renderHost();
       live.poll = setInterval(hostTick, 2000);
     }catch(e){ toast('Error de conexión'); }
   }
+  /* reanudar una sesión de host tras recargar/cerrar la página */
+  async function resumeHost(pin){
+    resetLive(); live.role='host'; live.pin=pin;
+    go('host');
+    try{ const s=await fetchSession(); if(s.ok) live.state=s; }catch(e){}
+    renderHost();
+    live.poll = setInterval(hostTick, 2000);
+    toast('Sesión reanudada · PIN '+pin+' ✅');
+  }
+  function clearHostSession(){ try{localStorage.removeItem('trivitek_host_session');}catch(e){} }
   async function hostTick(){
     try{
       const s = await fetchSession();
@@ -3408,6 +3446,7 @@ const App = (() => {
   async function hostEnd(){
     if(!confirm('¿Terminar la partida para todos?')) return;
     try{ await apiPost({action:'endSession', adminKey, pin:live.pin}); }catch(e){}
+    clearHostSession();
     resetLive(); renderAdminList(); go('admin');
   }
   function qrDataUrl(text){
