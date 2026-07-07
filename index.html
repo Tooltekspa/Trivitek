@@ -3017,6 +3017,7 @@ const App = (() => {
       const keep=[]; let newCorrect=q.correct;
       q.answers.forEach((a,i)=>{ if(a.trim()){ keep.push(a.trim()); if(i===q.correct) newCorrect=keep.length-1; } });
       q.answers=keep; q.correct=(e.mode==='survey'||e.mode==='poll')?-1:Math.min(newCorrect,keep.length-1);
+      if(e.mode==='survey'||e.mode==='poll') q.time=0; // encuestas/votaciones: sin tiempo, solo cierra el host
     });
     const idx=state.quizzes.findIndex(x=>x.id===e.id);
     if(idx>=0) state.quizzes[idx]=e; else state.quizzes.push(e);
@@ -3128,7 +3129,12 @@ const App = (() => {
     const g=state.game; const q=g.quiz.questions[g.qIndex];
     const multi = g.players.length>1 && g.quiz.mode==='quiz';
     $('q-progress').textContent=`Pregunta ${g.qIndex+1}/${g.quiz.questions.length}`;
-    $('q-turn').textContent = multi ? `Responde: ${g.players[g.turn].name}` : '';
+    if(isVote(g.quiz.mode)){
+      const nv=(q._votes||[]).reduce((a,b)=>a+b,0);
+      $('q-turn').textContent = nv?`🗳️ ${nv} voto(s) recibido(s) · pasa el dispositivo al siguiente`:'🗳️ Votación abierta · pasa el dispositivo';
+    } else {
+      $('q-turn').textContent = multi ? `Responde: ${g.players[g.turn].name}` : '';
+    }
     $('q-text').textContent=q.text;
     $('answered-note').style.display='none';
     const box=$('answers'); box.innerHTML='';
@@ -3149,6 +3155,19 @@ const App = (() => {
         box.appendChild(b);
       });
     }
+    if(isVote(g.quiz.mode)){
+      // la encuesta solo se cierra cuando el anfitrión lo decide
+      const closeBtn=document.createElement('button');
+      closeBtn.className='btn alt';
+      closeBtn.style.cssText='width:100%;font-size:18px;margin-top:14px;grid-column:1 / -1';
+      closeBtn.textContent='Cerrar encuesta y ver resultados 🏁';
+      closeBtn.onclick=()=>{
+        const nv=(q._votes||[]).reduce((a,b)=>a+b,0);
+        if(!nv && !confirm('Aún no hay votos. ¿Cerrar de todas formas?')) return;
+        revealSurvey();
+      };
+      box.appendChild(closeBtn);
+    }
     go('question');
     // timer (encuestas: sin tiempo)
     clearInterval(g.timerH);
@@ -3167,12 +3186,13 @@ const App = (() => {
   function pickAnswer(ai){
     const g=state.game; const q=g.quiz.questions[g.qIndex];
     if(isVote(g.quiz.mode)){
-      // contar voto y avanzar al siguiente votante o revelar
+      // contar voto y pasar al siguiente votante; la encuesta NO se cierra sola,
+      // solo cuando el anfitrión presiona "Cerrar encuesta"
       q._votes=q._votes||q.answers.map(()=>0);
       q._votes[ai]++;
       g.turn++;
-      if(g.turn>=Math.max(1,g.players.length)){ revealSurvey(); }
-      else { showQuestion(); } // siguiente votante (anónimo)
+      toast('Voto registrado 🗳️');
+      showQuestion(); // siguiente votante (anónimo)
       return;
     }
     const multi = g.players.length>1;
@@ -3374,8 +3394,8 @@ const App = (() => {
       const s = await fetchSession();
       if(!s.ok) return;
       live.state = s;
-      // auto-revelar cuando se acaba el tiempo
-      if(s.phase==='question' && s.question && s.question.time && s.remaining!=null && s.remaining<=0){
+      // auto-revelar cuando se acaba el tiempo (solo quiz; encuestas/votaciones las cierra el host manualmente)
+      if(!isVote(s.mode) && s.phase==='question' && s.question && s.question.time && s.remaining!=null && s.remaining<=0){
         hostAdvance(); return;
       }
       renderHost();
