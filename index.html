@@ -251,6 +251,10 @@
       <button class="btn ghost grow" onclick="App.exportAll()">⬇ Exportar todo</button>
       <button class="btn ghost grow" onclick="App.changePinPrompt()">🔑 Cambiar PIN</button>
     </div>
+    <div id="admin-sessions" style="margin-bottom:16px;display:none">
+      <h2>📡 Sesiones activas (<span id="sess-count">0</span>)</h2>
+      <div class="qlist" id="sess-list"></div>
+    </div>
     <div class="quizzes">
       <h2>Quizzes (<span id="admin-count">0</span>)</h2>
       <div class="qlist" id="admin-qlist"></div>
@@ -2808,28 +2812,28 @@ const App = (() => {
     if(cloud()) tryResumeHost();
   }
   async function tryResumeHost(){
-    let saved=null, key='';
+    let key='';
+    try{ key = localStorage.getItem('trivitek_adminkey')||''; }catch(e){}
+    if(!key) return;
     try{
-      saved = JSON.parse(localStorage.getItem('trivitek_host_session')||'null');
-      key = localStorage.getItem('trivitek_adminkey')||'';
-    }catch(e){}
-    if(!saved || !saved.pin || !key) return;
-    // sesiones de más de 12 horas se descartan
-    if(saved.ts && (Date.now()-saved.ts) > 12*3600*1000){ clearHostSession(); return; }
-    try{
-      // validar la clave guardada
+      // validar la clave guardada contra el backend
       const auth = await apiPost({action:'auth', adminKey:key});
       if(!auth.ok){ try{localStorage.removeItem('trivitek_adminkey');}catch(e){} return; }
       isAdmin=true; adminKey=key;
-      // verificar que la sesión siga viva en el backend
-      live.pin=saved.pin;
-      const s = await fetchSession();
-      live.pin=null;
-      if(!s.ok || s.phase==='final'){ clearHostSession(); return; }
-      if(confirm('Tienes una sesión activa con PIN '+saved.pin+'. ¿Quieres reanudarla? Los participantes conectados podrán seguir votando con el mismo PIN.')){
-        resumeHost(saved.pin);
+      // las sesiones viven en el Sheets: visibles desde CUALQUIER equipo
+      const r = await apiPost({action:'sessions', adminKey});
+      if(!r.ok || !(r.sessions||[]).length){ clearHostSession(); return; }
+      const ss=r.sessions;
+      if(ss.length===1){
+        const s=ss[0];
+        if(confirm('Hay una sesión activa: '+(s.title||'Sesión')+' (PIN '+s.pin+'). ¿Retomarla en este equipo? Podrás mostrar el QR y cerrarla cuando quieras.')){
+          resumeHost(String(s.pin)); return;
+        }
+      } else {
+        toast('Hay '+ss.length+' sesiones activas 📡');
       }
-      // si dice que no, NO se borra: podrá reanudarla en la próxima recarga o terminarla desde dentro
+      // si no retoma, quedan visibles en el panel de admin
+      renderAdminList(); go('admin');
     }catch(e){}
   }
   function buildBg(){
@@ -2907,6 +2911,7 @@ const App = (() => {
     setPin(np); toast('PIN actualizado 🔑');
   }
   function renderAdminList(){
+    if(cloud()) refreshSessions();
     const list=$('admin-qlist'); list.innerHTML='';
     $('admin-count').textContent=state.quizzes.length;
     if(!state.quizzes.length){ list.innerHTML='<p class="muted">Sin quizzes. Crea uno con “＋ Nueva” o sube un JSON.</p>'; return; }
@@ -2931,6 +2936,47 @@ const App = (() => {
       bLive.onclick=()=>hostStart(q.id);
       list.appendChild(div);
     });
+  }
+  /* sesiones en vivo abiertas (guardadas en Sheets): visibles desde cualquier equipo */
+  async function refreshSessions(){
+    const box=$('admin-sessions'), list=$('sess-list'); if(!box||!list) return;
+    try{
+      const r = await apiPost({action:'sessions', adminKey});
+      if(!r.ok){ box.style.display='none'; return; }
+      const ss = r.sessions||[];
+      $('sess-count').textContent = ss.length;
+      if(!ss.length){ box.style.display='none'; return; }
+      box.style.display='';
+      list.innerHTML='';
+      ss.forEach(s=>{
+        const ageH = Math.max(0, (Date.now()-(s.created||Date.now()))/3600000);
+        const left = Math.max(0, 10-ageH);
+        const div=document.createElement('div'); div.className='qrow';
+        div.innerHTML=`
+          <div class="ico">${esc(s.emoji||'📡')}</div>
+          <div class="meta">
+            <b>${esc(s.title||'Sesión')} · PIN ${esc(String(s.pin))}</b>
+            <small><span class="tag ${s.mode}">${s.mode==='survey'?'Encuesta':(s.mode==='poll'?'Votación':'Quiz')}</span>
+              · ${esc(s.phase==='lobby'?'En sala de espera':(s.phase==='question'?'Abierta 🗳️':'En resultados'))}
+              · se cierra sola en ${left.toFixed(1)} h</small>
+          </div>
+          <button class="iconbtn" title="Retomar / mostrar QR" style="background:#0081b0">📡</button>
+          <button class="iconbtn" title="Terminar sesión">🗑</button>`;
+        const [bGo,bEnd]=div.querySelectorAll('button');
+        bGo.onclick=()=>resumeHost(String(s.pin));
+        bEnd.onclick=()=>endSessionByPin(String(s.pin));
+        list.appendChild(div);
+      });
+    }catch(e){ box.style.display='none'; }
+  }
+  async function endSessionByPin(pin){
+    if(!confirm('¿Terminar la sesión con PIN '+pin+' para todos?')) return;
+    try{ await apiPost({action:'endSession', adminKey, pin}); }catch(e){}
+    try{
+      const saved=JSON.parse(localStorage.getItem('trivitek_host_session')||'null');
+      if(saved && String(saved.pin)===String(pin)) clearHostSession();
+    }catch(e){}
+    refreshSessions(); toast('Sesión terminada');
   }
   function duplicateQuiz(id){
     const q=state.quizzes.find(x=>x.id===id); if(!q) return;
@@ -3525,10 +3571,11 @@ const App = (() => {
       box.innerHTML = head + `
         <div class="pin-box">
           <div class="lbl">PIN</div><div class="pin-code" style="font-size:40px">${s.pin}</div>
+          <div class="qr-wrap"><img src="${qrDataUrl(joinUrl)}" alt="QR"></div>
+          <div class="join-link">${esc(joinUrl)}</div>
         </div>
         <div class="big-q">${esc(q.text)}</div>
         <div class="live-count">${s.votes!=null?('🗳️ '+s.votes+' voto(s) recibido(s)'):'🗳️ Votación abierta'}</div>
-        <div class="waiting" style="flex:0"><div class="answered-count">Votación abierta…</div></div>
         <div class="editor-foot live-host-foot">
           <button class="btn alt" style="width:100%;font-size:20px" onclick="App.hostAdvance()">Cerrar votación y ver ganador 🏆</button>
         </div>`;
