@@ -2943,7 +2943,7 @@ const App = (() => {
     try{
       const r = await apiPost({action:'sessions', adminKey});
       if(!r.ok){ box.style.display='none'; return; }
-      const ss = r.sessions||[];
+      const ss = (r.sessions||[]).filter(s=>s.phase!=='ended');
       $('sess-count').textContent = ss.length;
       if(!ss.length){ box.style.display='none'; return; }
       box.style.display='';
@@ -2971,7 +2971,10 @@ const App = (() => {
   }
   async function endSessionByPin(pin){
     if(!confirm('¿Terminar la sesión con PIN '+pin+' para todos?')) return;
-    try{ await apiPost({action:'endSession', adminKey, pin}); }catch(e){}
+    let r=null;
+    try{ r = await apiPost({action:'endSession', adminKey, pin:String(pin)}); }
+    catch(e){ toast('Sin conexión: no se pudo terminar'); return; }
+    if(!r || !r.ok){ toast((r&&r.error)||'Error al terminar la sesión'); refreshSessions(); return; }
     try{
       const saved=JSON.parse(localStorage.getItem('trivitek_host_session')||'null');
       if(saved && String(saved.pin)===String(pin)) clearHostSession();
