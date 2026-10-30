@@ -205,6 +205,26 @@
   .tag.poll{background:#25638f;color:#fff}
   .vote-wrap{display:flex;flex-direction:column;gap:0;margin-top:6px}
   .vote-select{font-size:18px;padding:16px 14px;font-weight:700}
+  /* ---------- JUGADOR EN EL TELÉFONO: todo cabe en una pantalla ---------- */
+  body.playing .app{padding:10px 12px calc(10px + env(safe-area-inset-bottom));min-height:100vh;min-height:100dvh;height:100vh;height:100dvh}
+  body.playing #screen-live{min-height:0;height:100%}
+  body.playing #screen-live .editor-head{margin-bottom:6px;gap:8px}
+  body.playing #screen-live .editor-head h2{font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  .play-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;font-weight:800;font-size:14px}
+  .play-bar .who{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:.9}
+  .ptimer{flex:none;min-width:46px;height:46px;border-radius:50%;background:#fff;color:var(--ink);display:grid;place-items:center;font-family:'Fredoka';font-size:21px;box-shadow:0 3px 0 rgba(0,0,0,.2)}
+  .ptimer.low{background:var(--red);color:#fff}
+  .play-q{flex:none;font-family:'Fredoka';text-align:center;background:#fff;color:var(--ink);border-radius:14px;padding:12px 14px;box-shadow:0 5px 0 rgba(8,30,48,.22);margin-bottom:10px;line-height:1.2;overflow-wrap:anywhere}
+  .play-answers{flex:1;min-height:0;display:grid;gap:8px;grid-auto-rows:minmax(0,1fr);--af:20px}
+  .play-answers.cols1{grid-template-columns:1fr}
+  .play-answers.cols2{grid-template-columns:1fr 1fr}
+  .play-answers .answer{min-height:0;padding:8px 12px;font-size:var(--af);line-height:1.15;overflow:hidden;box-shadow:0 4px 0 rgba(8,30,48,.22);gap:10px}
+  .play-answers .answer span:last-child{overflow-wrap:anywhere}
+  .play-answers .answer .shape{font-size:calc(var(--af) * 1.15)}
+  .play-answers .answer.win{transform:none}
+  .play-result{flex:none;text-align:center;font-family:'Fredoka';font-size:clamp(22px,6.5vw,30px);margin:2px 0 8px}
+  .play-result.ok{color:#9ff0c0}.play-result.bad{color:#ff8a88}.play-result.none{color:#fff;opacity:.85}
+  .play-note{flex:none;margin-top:8px;text-align:center;font-weight:800;font-size:15px;background:rgba(255,255,255,.14);padding:10px;border-radius:12px}
   /* ---------- PANTALLA PARA PROYECTAR (?pantalla=PIN) ---------- */
   .proj-btn{padding:9px 14px !important;font-size:15px !important;white-space:nowrap}
   .host-only{font-size:14px;margin-top:8px;opacity:.85}
@@ -3510,7 +3530,7 @@ const App = (() => {
     if(live.ansRef){ live.ansRef.off(); live.ansRef=null; }
     (live.refs||[]).forEach(r=>{ try{ r.off(); }catch(e){} }); live.refs=[];
   }
-  function resetLive(){ stopLive(); live={ role:null, pin:null, name:null, uid:null, poll:null, state:null, answered:false, lastPhaseKey:null, tickH:null, voter:null, refs:[], raw:{}, busy:false }; }
+  function resetLive(){ stopLive(); document.body.classList.remove('playing'); live={ role:null, pin:null, name:null, uid:null, poll:null, state:null, answered:false, lastPhaseKey:null, tickH:null, voter:null, refs:[], raw:{}, busy:false }; }
 
   // Convierte los datos de Firebase al mismo formato que usaba Apps Script
   function buildState(){
@@ -3980,7 +4000,7 @@ const App = (() => {
     if(isVote(s.mode)) return;
     const qi=s.qIndex;
     roomRef(live.pin,'answers/'+qi+'/'+fbUid).get().then(x=>{
-      if(x.exists() && live.state && live.state.qIndex===qi && live.state.phase==='question' && !live.answered){ live.answered=true; renderPlayer(); }
+      if(x.exists() && live.state && live.state.qIndex===qi && live.state.phase==='question' && !live.answered){ live.answered=true; live.choice=x.val().a; live.choiceQ=qi; renderPlayer(); }
     }).catch(()=>{});
   }
   async function submitLiveAnswer(choice){
@@ -3988,7 +4008,7 @@ const App = (() => {
     const s=live.state, m=live.raw.meta;
     if(!s || s.phase!=='question') return;
     if(s.question && s.question.time && (m.start + s.question.time*1000 - fbNow())<=0){ toast('Se acabó el tiempo'); return; }
-    live.answered=true; renderPlayer();
+    live.answered=true; live.choice=choice; live.choiceQ=s.qIndex; renderPlayer();
     try{ await roomRef(live.pin,'answers/'+s.qIndex+'/'+fbUid).set({ a:choice, t:TS() }); }
     catch(e){ toast('No se pudo enviar'); }
   }
@@ -4037,10 +4057,52 @@ const App = (() => {
     // reveal / final -> ganador
     box.innerHTML=head+winnerHtml(s)+`<div class="muted center" style="margin-top:12px">¡Gracias por votar!</div>`;
   }
+  /* Ajusta la letra para que pregunta y respuestas quepan en cualquier teléfono */
+  function playLayout(q){
+    const ans=(q.answers||[]), n=ans.length;
+    const maxLen=Math.max(0,...ans.map(a=>String(a).length));
+    const qLen=String(q.text||'').length;
+    const land=innerWidth>innerHeight;
+    const cols = land ? 2 : ((n===3 || maxLen>16) ? 1 : 2);
+    let qBase = qLen<=30?32 : qLen<=70?26 : qLen<=120?22 : 19;
+    let aBase = maxLen<=6?34 : maxLen<=14?27 : maxLen<=30?22 : 19;
+    qBase=Math.min(qBase, Math.round(Math.min(innerWidth,700)*0.085));
+    if(land){ qBase=Math.min(qBase,24); aBase=Math.min(aBase,22); }
+    return { cols, qBase, aBase };
+  }
+  function fitPlay(){
+    if(!document.body.classList.contains('playing')) return;
+    const box=$('screen-live'), qEl=box.querySelector('.play-q'), grid=box.querySelector('.play-answers');
+    if(!grid) return;
+    let qf=+(qEl&&qEl.dataset.base||20), af=+(grid.dataset.base||20);
+    const apply=()=>{ if(qEl) qEl.style.fontSize=qf+'px'; grid.style.setProperty('--af',af+'px'); };
+    const over=()=> document.documentElement.scrollHeight>innerHeight+1
+      || [...grid.children].some(b=>b.scrollHeight>b.clientHeight+1 || b.scrollWidth>b.clientWidth+1);
+    apply();
+    for(let i=0;i<60 && over();i++){
+      if(qEl && qf>15 && qf>=af+2) qf--; else if(af>12) af--; else if(qEl && qf>12) qf--; else break;
+      apply();
+    }
+  }
+  let fitT=null;
+  window.addEventListener('resize',()=>{ clearTimeout(fitT); fitT=setTimeout(()=>{
+    if(document.body.classList.contains('playing') && live.state && live.state.question){ renderPlayer(); }
+  },150); });
+  function playerTimer(){
+    if(live.tickH){ clearInterval(live.tickH); live.tickH=null; }
+    const m=live.raw&&live.raw.meta; const q=m&&m.question;
+    const el=()=>$('p-timer');
+    if(!q || !q.time){ if(el()) el().style.display='none'; return; }
+    const tick=()=>{ const e=el(); if(!e){ clearInterval(live.tickH); live.tickH=null; return; }
+      const left=Math.max(0,Math.ceil((m.start+q.time*1000-fbNow())/1000)); e.textContent=left; e.classList.toggle('low',left<=5);
+      if(left<=0){ clearInterval(live.tickH); live.tickH=null; } };
+    tick(); live.tickH=setInterval(tick,250);
+  }
   function renderPlayer(){
     const s=live.state; const box=$('screen-live');
     const head=`<div class="editor-head"><button class="iconbtn" onclick="App.leaveLive()">←</button><h2>${esc(s?s.title:'Juego')}</h2></div>`;
     if(!s){ box.innerHTML=head+'<div class="waiting"><div class="spinner"></div><div>Conectando…</div></div>'; return; }
+    document.body.classList.toggle('playing', !isVote(s.mode) && (s.phase==='question'||s.phase==='reveal') && !(s.phase==='question' && live.answered) && ((s.question&&s.question.answers)||[]).length<=4);
     if(isVote(s.mode)){ renderPollPlayer(box, head, s); return; }
     if(s.phase==='lobby'){
       box.innerHTML=head+`<div class="you-tag">Eres: <b>${esc(live.name)}</b></div>
@@ -4069,11 +4131,13 @@ const App = (() => {
         $('live-send-btn').onclick=()=>{ const v=$('live-select').value; if(v===''){ toast('Elige una opción'); return; } submitLiveAnswer(Number(v)); };
         return;
       }
-      box.innerHTML=head+`<div class="you-tag">${esc(live.name)} · Pregunta ${s.qIndex+1}/${s.qCount}</div>
-        <div class="big-q">${esc(q.text)}</div>
-        <div class="answers" id="live-answers">${(q.answers||[]).map((a,i)=>`<button class="answer c${i}"><span class="shape">${SHAPES[i]}</span><span>${esc(a)}</span></button>`).join('')}</div>`;
+      const L=playLayout(q);
+      box.innerHTML=head+`<div class="play-bar"><span class="who">${esc(live.name)} · Pregunta ${s.qIndex+1}/${s.qCount}</span><span class="ptimer" id="p-timer"></span></div>
+        <div class="play-q" data-base="${L.qBase}">${esc(q.text)}</div>
+        <div class="play-answers cols${L.cols}" id="live-answers" data-base="${L.aBase}">${(q.answers||[]).map((a,i)=>`<button class="answer c${i}"><span class="shape">${SHAPES[i]}</span><span>${esc(a)}</span></button>`).join('')}</div>`;
       const btns=box.querySelectorAll('#live-answers .answer');
       btns.forEach((b,i)=>b.onclick=()=>submitLiveAnswer(i));
+      playerTimer(); fitPlay();
       return;
     }
     if(s.phase==='reveal'){
@@ -4086,11 +4150,26 @@ const App = (() => {
       const q=s.question||{};
       const me=(s.players||[]).find(p=>p.id===live.uid);
       const rank=(s.players||[]).slice().sort((a,b)=>b.score-a.score).findIndex(p=>p.id===live.uid)+1;
+      const mine = (live.choiceQ===s.qIndex) ? live.choice : null;
       const opts=(q.answers||[]).map((a,i)=>{
         const win=(s.mode!=='survey'&&i===rv.correct);
-        return `<div class="answer c${i} ${win?'win':'dim'}"><span class="shape">${SHAPES[i]}</span><span>${esc(a)}</span>${win?'<span style="margin-left:auto">✅</span>':''}</div>`;
+        const pick=(mine===i)?' 👈':'';
+        return `<div class="answer c${i} ${win?'win':'dim'}"><span class="shape">${SHAPES[i]}</span><span>${esc(a)}${pick}</span>${win?'<span style="margin-left:auto">✅</span>':''}</div>`;
       }).join('');
-      box.innerHTML=head+`<div class="reveal-banner ${cls}">${banner}</div>
+      let res, rcls;
+      if(s.mode==='survey'){ res='📊 Resultados'; rcls='none'; }
+      else if(mine==null){ res='⏱ No alcanzaste a responder'; rcls='none'; }
+      else if(mine===rv.correct){ res='🎉 ¡Correcta!'; rcls='ok'; }
+      else { res='❌ Incorrecta'; rcls='bad'; }
+      if((q.answers||[]).length<=4){
+        const L=playLayout(q);
+        box.innerHTML=head+`<div class="play-result ${rcls}">${res}</div>
+          <div class="play-answers cols${L.cols}" data-base="${Math.min(L.aBase,24)}">${opts}</div>
+          ${s.mode!=='survey'&&me?`<div class="play-note">${esc(live.name)}: <b>${me.score} pts</b> · Lugar ${rank} de ${(s.players||[]).length}</div>`:''}`;
+        fitPlay();
+        return;
+      }
+      box.innerHTML=head+`<div class="reveal-banner ${cls}">${res}</div>
         <div class="answers">${opts}</div>
         ${s.mode!=='survey'&&me?`<div class="answered-note" style="display:block;margin-top:14px">${esc(live.name)}: <b>${me.score} pts</b> · Lugar ${rank} de ${(s.players||[]).length}</div>`:''}`;
       return;
