@@ -201,6 +201,26 @@
   .tag.poll{background:#25638f;color:#fff}
   .vote-wrap{display:flex;flex-direction:column;gap:0;margin-top:6px}
   .vote-select{font-size:18px;padding:16px 14px;font-weight:700}
+  /* ---------- PANTALLA PARA PROYECTAR (?pantalla=PIN) ---------- */
+  .proj-btn{padding:9px 14px !important;font-size:15px !important;white-space:nowrap}
+  .host-only{font-size:14px;margin-top:8px;opacity:.85}
+  body.projector .app{max-width:1500px;padding-top:24px}
+  body.projector #screen-host .editor-foot,
+  body.projector #screen-host .editor-head .iconbtn,
+  body.projector #screen-host .proj-btn,
+  body.projector #screen-host .host-only{display:none !important}
+  body.projector #screen-host .editor-head h2{font-size:clamp(26px,2.6vw,40px);text-align:center}
+  body.projector .big-q{font-size:clamp(30px,3.8vw,60px);padding:30px 24px}
+  body.projector .answer{font-size:clamp(22px,2.4vw,38px);min-height:120px}
+  body.projector .answer .shape{font-size:42px}
+  body.projector .timer{width:96px;height:96px;font-size:40px}
+  body.projector .pin-code{font-size:clamp(64px,8vw,130px)}
+  body.projector .qr-wrap img{width:300px;height:300px}
+  body.projector .join-link{font-size:18px}
+  body.projector .live-count,body.projector .answered-count{font-size:24px}
+  body.projector .pchip{font-size:20px;padding:10px 18px}
+  body.projector .scorerow{font-size:24px;padding:16px 22px}
+  body.projector .sbar .fill{font-size:24px;padding:18px}
   .vote-select option{font-weight:600}
   @media(max-width:520px){.ans-edit{grid-template-columns:1fr}}
 </style>
@@ -2696,6 +2716,9 @@ var qrcode = function() {
 }));
 
 </script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <script>
 const SHAPES = ['▲','◆','●','■'];
 const AV_COLORS = ['#25638f','#0081b0','#e52624','#767676','#1a4a6e','#00a0c0','#c0392b','#5a9bbf'];
@@ -2704,6 +2727,19 @@ const AV_COLORS = ['#25638f','#0081b0','#e52624','#767676','#1a4a6e','#00a0c0','
    CONFIG — pega aquí la URL de tu Apps Script (termina en /exec)
    para activar el modo nube. Déjala vacía ('') para modo local.
    ============================================================ */
+/* ============================================================
+   FIREBASE — juego en vivo en tiempo real (proyecto trivitek-1f131)
+   ============================================================ */
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyCo5fBMze9JXfob6e3bI88YIhhjxT4ne5E",
+  authDomain: "trivitek-1f131.firebaseapp.com",
+  databaseURL: "https://trivitek-1f131-default-rtdb.firebaseio.com",
+  projectId: "trivitek-1f131",
+  storageBucket: "trivitek-1f131.firebasestorage.app",
+  messagingSenderId: "1026434400792",
+  appId: "1:1026434400792:web:2030ed0517d20c8197396d"
+};
+
 const CONFIG = {
   API_URL: 'https://script.google.com/macros/s/AKfycbwLQpS2oK1RM15cJSf-Qh4q8Oq_Dpl0MX1xQQwHH4VJpqU6sEwqfOoEOb03Qpd816CG/exec'
 };
@@ -2805,8 +2841,11 @@ const App = (() => {
     renderLibrary();
     // deep-link: ?pin=XXXXXX abre la pantalla de unirse
     try{
-      const pin = new URLSearchParams(location.search).get('pin');
-      if(pin && cloud()){ joinEntry(pin); return; }
+      const params = new URLSearchParams(location.search);
+      const scr = params.get('pantalla');
+      if(scr){ enterScreen(scr); return; }
+      const pin = params.get('pin');
+      if(pin){ joinEntry(pin); return; }
     }catch(e){}
     // reanudar sesión de host si la página se cerró con una votación/partida activa
     if(cloud()) tryResumeHost();
@@ -2821,12 +2860,12 @@ const App = (() => {
       if(!auth.ok){ try{localStorage.removeItem('trivitek_adminkey');}catch(e){} return; }
       isAdmin=true; adminKey=key;
       // las sesiones viven en el Sheets: visibles desde CUALQUIER equipo
-      const r = await apiPost({action:'sessions', adminKey});
-      if(!r.ok || !(r.sessions||[]).length){ clearHostSession(); return; }
-      const ss=r.sessions;
+      // las sesiones en vivo viven en Firebase (las abiertas desde este equipo)
+      const ss = (await listMySessions()).filter(s=>s.phase!=='final');
+      if(!ss.length){ clearHostSession(); return; }
       if(ss.length===1){
         const s=ss[0];
-        if(confirm('Hay una sesión activa: '+(s.title||'Sesión')+' (PIN '+s.pin+'). ¿Retomarla en este equipo? Podrás mostrar el QR y cerrarla cuando quieras.')){
+        if(confirm('Hay una sesión activa: '+(s.title||'Sesión')+' (PIN '+s.pin+'). ¿Retomarla? Podrás mostrar el QR y cerrarla cuando quieras.')){
           resumeHost(String(s.pin)); return;
         }
       } else {
@@ -2911,7 +2950,7 @@ const App = (() => {
     setPin(np); toast('PIN actualizado 🔑');
   }
   function renderAdminList(){
-    if(cloud()) refreshSessions();
+    refreshSessions();
     const list=$('admin-qlist'); list.innerHTML='';
     $('admin-count').textContent=state.quizzes.length;
     if(!state.quizzes.length){ list.innerHTML='<p class="muted">Sin quizzes. Crea uno con “＋ Nueva” o sube un JSON.</p>'; return; }
@@ -2941,9 +2980,7 @@ const App = (() => {
   async function refreshSessions(){
     const box=$('admin-sessions'), list=$('sess-list'); if(!box||!list) return;
     try{
-      const r = await apiPost({action:'sessions', adminKey});
-      if(!r.ok){ box.style.display='none'; return; }
-      const ss = (r.sessions||[]).filter(s=>s.phase!=='final' && s.phase!=='ended');
+      const ss = (await listMySessions()).filter(s=>s.phase!=='final');
       $('sess-count').textContent = ss.length;
       if(!ss.length){ box.style.display='none'; return; }
       box.style.display='';
@@ -2971,10 +3008,9 @@ const App = (() => {
   }
   async function endSessionByPin(pin){
     if(!confirm('¿Terminar la sesión con PIN '+pin+' para todos?')) return;
-    let r=null;
-    try{ r = await apiPost({action:'endSession', adminKey, pin:String(pin), purge:true}); }
+    try{ await fbReady(); await removeRoom(String(pin)); }
     catch(e){ toast('Sin conexión: no se pudo terminar'); return; }
-    if(!r || !r.ok){ toast((r&&r.error)||'Error al terminar la sesión'); refreshSessions(); return; }
+    if(live.role==='host' && String(live.pin)===String(pin)) resetLive();
     try{
       const saved=JSON.parse(localStorage.getItem('trivitek_host_session')||'null');
       if(saved && String(saved.pin)===String(pin)) clearHostSession();
@@ -3423,80 +3459,257 @@ const App = (() => {
   }
 
   /* ============================================================
-     JUEGO EN VIVO (host + jugadores con PIN/QR)  — sobre GAS
+     JUEGO EN VIVO (host + jugadores con PIN/QR) — sobre FIREBASE
+     Tiempo real (sin consultas cada 2 s). Los quizzes y la clave
+     de administrador siguen en Apps Script.
      ============================================================ */
-  let live = { role:null, pin:null, name:null, poll:null, state:null, answered:false, lastPhaseKey:null, tickH:null, voter:null };
+  let live = { role:null, pin:null, name:null, uid:null, poll:null, state:null, answered:false, lastPhaseKey:null, tickH:null, voter:null, refs:[], raw:{}, busy:false };
 
   // Encuesta y Votación se tratan igual: anónimas, voto único, solo gana 1
   const isVote = m => (m==='poll' || m==='survey');
 
-  /* token de votante anónimo (1 voto por dispositivo) */
-  function voterToken(pin){
-    const k='trivitek_voter_'+pin;
-    try{ let t=localStorage.getItem(k); if(!t){ t='v'+Math.random().toString(36).slice(2)+Date.now().toString(36); localStorage.setItem(k,t);} return t; }
-    catch(e){ if(!live._v) live._v='v'+Math.random().toString(36).slice(2); return live._v; }
-  }
   function getVoted(pin,qi){ try{ const v=localStorage.getItem('trivitek_voted_'+pin+'_'+qi); return v==null?null:Number(v); }catch(e){ return (live._voted&&live._voted[qi]!=null)?live._voted[qi]:null; } }
   function setVoted(pin,qi,c){ try{ localStorage.setItem('trivitek_voted_'+pin+'_'+qi,String(c)); }catch(e){ live._voted=live._voted||{}; live._voted[qi]=c; } }
+
+  /* ---------- Firebase ---------- */
+  let fbDb=null, fbUid=null, fbOffset=0, fbInit=null;
+  const TS = () => firebase.database.ServerValue.TIMESTAMP;
+  const fbNow = () => Date.now()+fbOffset;
+  function fbReady(){
+    if(fbInit) return fbInit;
+    fbInit = (async()=>{
+      if(!window.firebase) throw new Error('No se pudo cargar Firebase');
+      if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+      fbDb = firebase.database();
+      fbDb.ref('.info/serverTimeOffset').on('value', s=>{ fbOffset=s.val()||0; });
+      fbUid = await new Promise((res,rej)=>{
+        const un = firebase.auth().onAuthStateChanged(u=>{
+          if(u){ un(); res(u.uid); } else firebase.auth().signInAnonymously().catch(rej);
+        }, rej);
+      });
+      return fbDb;
+    })();
+    fbInit.catch(()=>{ fbInit=null; });
+    return fbInit;
+  }
+  const roomRef = (pin, path) => fbDb.ref('rooms/'+pin+(path?'/'+path:''));
+  function listen(ref, cb){ ref.on('value', cb); live.refs.push(ref); }
 
   function liveBaseUrl(){ return location.href.split('?')[0].split('#')[0]; }
   function stopLive(){
     if(live.poll){ clearInterval(live.poll); live.poll=null; }
     if(live.tickH){ clearInterval(live.tickH); live.tickH=null; }
+    if(live.ansRef){ live.ansRef.off(); live.ansRef=null; }
+    (live.refs||[]).forEach(r=>{ try{ r.off(); }catch(e){} }); live.refs=[];
   }
-  function resetLive(){ stopLive(); live={ role:null, pin:null, name:null, poll:null, state:null, answered:false, lastPhaseKey:null, tickH:null }; }
+  function resetLive(){ stopLive(); live={ role:null, pin:null, name:null, uid:null, poll:null, state:null, answered:false, lastPhaseKey:null, tickH:null, voter:null, refs:[], raw:{}, busy:false }; }
 
-  async function fetchSession(){
-    const res = await fetch(CONFIG.API_URL + '?action=session&pin=' + encodeURIComponent(live.pin));
-    return res.json();
+  // Convierte los datos de Firebase al mismo formato que usaba Apps Script
+  function buildState(){
+    const r=live.raw||{}, m=r.meta; if(!m) return null;
+    const scores=r.scores||{};
+    const players=Object.entries(r.players||{}).map(([id,p])=>({ id, name:p.name, online:!!p.online, score:scores[id]||0 }));
+    const q=m.question||null;
+    let remaining=null;
+    if(m.phase==='question' && q && q.time) remaining=Math.max(0,(m.start + q.time*1000 - fbNow())/1000);
+    const nAns = r.answers ? Object.keys(r.answers).length : (r.count||0);
+    return { ok:true, pin:live.pin, title:m.title, emoji:m.emoji, mode:m.mode, phase:m.phase,
+             qIndex:m.qIndex, qCount:m.qCount, question:q, remaining, players,
+             reveal:m.reveal||null, votes:nAns, answered:nAns };
+  }
+
+  /* sesiones abiertas desde este equipo (cierre automático a las 10 h) */
+  async function listMySessions(){
+    await fbReady();
+    const idx=(await fbDb.ref('hosts/'+fbUid).get()).val()||{};
+    const out=[];
+    await Promise.all(Object.keys(idx).map(async pin=>{
+      const m=(await roomRef(pin,'meta').get()).val();
+      if(!m){ fbDb.ref('hosts/'+fbUid+'/'+pin).remove().catch(()=>{}); return; }
+      if((Date.now()-(m.created||Date.now()))/3600000 > 10){ removeRoom(pin).catch(()=>{}); return; }
+      out.push({ pin, title:m.title, emoji:m.emoji, mode:m.mode, phase:m.phase, created:m.created });
+    }));
+    return out;
+  }
+  async function removeRoom(pin){
+    await roomRef(pin).remove();
+    try{ await fbDb.ref('hosts/'+fbUid+'/'+pin).remove(); }catch(e){}
   }
 
   /* ---------- HOST ---------- */
   async function hostStart(quizId){
-    if(!cloud()){ toast('El modo en vivo necesita el backend configurado'); return; }
+    const quiz=state.quizzes.find(x=>x.id===quizId);
+    if(!quiz || !(quiz.questions||[]).length){ toast('Este quiz no tiene preguntas'); return; }
     toast('Creando sala…');
     try{
-      const r = await apiPost({action:'createSession', adminKey, quizId});
-      if(!r.ok){ toast(r.error||'No se pudo crear la sala'); return; }
-      resetLive(); live.role='host'; live.pin=r.pin;
-      try{localStorage.setItem('trivitek_host_session', JSON.stringify({pin:r.pin, ts:Date.now()}));}catch(e){}
-      go('host');
-      const first = await fetchSession(); if(first.ok) live.state=first;
-      renderHost();
-      live.poll = setInterval(hostTick, 2000);
-    }catch(e){ toast('Error de conexión'); }
+      await fbReady();
+      let pin=null;
+      for(let i=0;i<8&&!pin;i++){
+        const p=String(Math.floor(100000+Math.random()*900000));
+        try{ await roomRef(p,'host').set(fbUid); pin=p; }catch(e){}
+      }
+      if(!pin) throw new Error('No se pudo crear la sala (revisa las reglas de Firebase)');
+      const mode=quiz.mode||'quiz';
+      const questions=quiz.questions.map(q=>{
+        const opts=[]; let correct=-1;
+        (q.answers||[]).forEach((a,i)=>{ if(String(a??'').trim()!==''){ if(i===q.correct) correct=opts.length; opts.push(String(a)); } });
+        return { text:String(q.text||''), answers:opts, time:isVote(mode)?0:(Number(q.time)||0), correct:isVote(mode)?-1:correct };
+      });
+      await roomRef(pin).update({
+        meta:{ title:quiz.title||'Trivitek', emoji:quiz.emoji||'🎯', mode, phase:'lobby', qIndex:-1, qCount:questions.length, created:TS() },
+        secret:{ questions }
+      });
+      await fbDb.ref('hosts/'+fbUid+'/'+pin).set(true);
+      try{localStorage.setItem('trivitek_host_session', JSON.stringify({pin, ts:Date.now()}));}catch(e){}
+      enterHost(pin, questions);
+    }catch(e){ console.error(e); toast(e.message||'Error de conexión'); }
   }
   /* reanudar una sesión de host tras recargar/cerrar la página */
   async function resumeHost(pin){
-    resetLive(); live.role='host'; live.pin=pin;
-    go('host');
-    try{ const s=await fetchSession(); if(s.ok) live.state=s; }catch(e){}
-    renderHost();
-    live.poll = setInterval(hostTick, 2000);
-    toast('Sesión reanudada · PIN '+pin+' ✅');
+    try{
+      await fbReady();
+      const host=(await roomRef(pin,'host').get()).val();
+      if(!host){ toast('Esa sala ya no existe'); clearHostSession(); return; }
+      if(host!==fbUid){ toast('Esa sala se abrió en otro equipo'); return; }
+      const sec=(await roomRef(pin,'secret').get()).val();
+      enterHost(pin, (sec&&sec.questions)||[]);
+      toast('Sesión reanudada · PIN '+pin+' ✅');
+    }catch(e){ console.error(e); toast('No se pudo retomar la sala'); }
   }
   function clearHostSession(){ try{localStorage.removeItem('trivitek_host_session');}catch(e){} }
-  async function hostTick(){
-    try{
-      const s = await fetchSession();
-      if(!s.ok) return;
-      live.state = s;
-      // auto-revelar cuando se acaba el tiempo (solo quiz; encuestas/votaciones las cierra el host manualmente)
-      if(!isVote(s.mode) && s.phase==='question' && s.question && s.question.time && s.remaining!=null && s.remaining<=0){
-        hostAdvance(); return;
+  function enterHost(pin, questions){
+    resetLive(); live.role='host'; live.pin=pin; live.questions=questions;
+    go('host'); renderHost();
+    listen(roomRef(pin,'meta'), s=>{
+      const m=s.val();
+      if(!m){ if(live.role==='host' && live.pin===pin){ resetLive(); clearHostSession(); toast('La sala fue cerrada'); renderAdminList(); go('admin'); } return; }
+      live.raw.meta=m;
+      if(m.qIndex!==live.ansQ) subscribeAnswers(m.qIndex);
+      live.state=buildState(); renderHost();
+    });
+    listen(roomRef(pin,'players'), s=>{
+      live.raw.players=s.val()||{}; live.state=buildState(); if(!live.state) return;
+      if(live.state.phase==='lobby') renderHost(); else updateHostAnswered();
+    });
+    listen(roomRef(pin,'scores'), s=>{
+      live.raw.scores=s.val()||{}; live.state=buildState(); if(!live.state) return;
+      if(live.state.phase==='reveal' || live.state.phase==='final') renderHost();
+    });
+    live.poll = setInterval(hostTick, 500);
+  }
+  function subscribeAnswers(qi){
+    if(live.ansRef){ live.ansRef.off(); live.ansRef=null; }
+    live.ansQ=qi; live.raw.answers={};
+    if(qi==null || qi<0) return;
+    live.ansRef=roomRef(live.pin,'answers/'+qi);
+    live.ansRef.on('value', s=>{
+      live.raw.answers=s.val()||{}; live.state=buildState(); if(!live.state) return;
+      const n=Object.keys(live.raw.answers).length;
+      if(live.role==='host' && n!==live.countSent){ live.countSent=n; roomRef(live.pin,'count').set(n).catch(()=>{}); }
+      if(live.state.phase==='question'){ if(isVote(live.state.mode)) renderHost(); else updateHostAnswered(); }
+    });
+  }
+  /* ---------- PANTALLA PARA PROYECTAR (solo lectura, sin controles) ---------- */
+  function openScreen(){
+    if(!live.pin) return;
+    const url=liveBaseUrl()+'?pantalla='+live.pin;
+    const w=window.open(url,'trivitek_pantalla');
+    if(!w) toast('Permite ventanas emergentes o abre: '+url);
+  }
+  async function enterScreen(pin){
+    document.body.classList.add('projector');
+    resetLive(); live.role='screen'; live.pin=String(pin);
+    go('host'); renderHost();
+    try{ await fbReady(); }
+    catch(e){ $('screen-host').innerHTML='<div class="waiting"><div class="display" style="font-size:30px">No se pudo conectar</div></div>'; return; }
+    listen(roomRef(pin,'meta'), s=>{
+      const m=s.val();
+      if(!m){
+        stopLive();
+        $('screen-host').innerHTML=`<div class="waiting"><div class="display" style="font-size:36px">Sesión terminada o PIN no encontrado</div><div class="muted">PIN ${esc(String(pin))}</div></div>`;
+        return;
       }
-      renderHost();
-    }catch(e){}
+      live.raw.meta=m; live.state=buildState(); renderHost();
+    });
+    listen(roomRef(pin,'players'), s=>{
+      live.raw.players=s.val()||{}; live.state=buildState(); if(!live.state) return;
+      if(live.state.phase==='lobby') renderHost(); else updateHostAnswered();
+    });
+    listen(roomRef(pin,'scores'), s=>{
+      live.raw.scores=s.val()||{}; live.state=buildState(); if(!live.state) return;
+      if(live.state.phase==='reveal' || live.state.phase==='final') renderHost();
+    });
+    listen(roomRef(pin,'count'), s=>{
+      live.raw.count=s.val()||0; live.state=buildState(); if(!live.state) return;
+      if(live.state.phase==='question'){ if(isVote(live.state.mode)) renderHost(); else updateHostAnswered(); }
+    });
+  }
+  function updateHostAnswered(){
+    const s=live.state, el=$('host-answered'); if(!el||!s) return;
+    const on=s.players.filter(p=>p.online).length;
+    el.textContent='✅ '+s.answered+' / '+on+' respondieron';
+  }
+  // reloj local: revela solo cuando se acaba el tiempo o respondieron todos (solo quiz)
+  function hostTick(){
+    const s=buildState(); if(!s || live.busy) return;
+    live.state=s;
+    if(s.phase!=='question' || isVote(s.mode)) return;
+    const on=s.players.filter(p=>p.online).length;
+    const timeUp = s.question && s.question.time && s.remaining<=0;
+    const allIn = on>0 && s.answered>=on;
+    if(timeUp || allIn) hostAdvance();
   }
   async function hostAdvance(){
-    try{ await apiPost({action:'advance', adminKey, pin:live.pin}); const s=await fetchSession(); if(s.ok){live.state=s; renderHost();} }
-    catch(e){ toast('Error al avanzar'); }
+    if(live.busy || live.role!=='host') return;
+    const m=live.raw.meta; if(!m) return;
+    live.busy=true;
+    try{
+      if(!live.questions || !live.questions.length){ const sec=(await roomRef(live.pin,'secret').get()).val(); live.questions=(sec&&sec.questions)||[]; }
+      if(m.phase==='lobby') await openQuestion(0);
+      else if(m.phase==='question') await revealQuestion();
+      else if(m.phase==='reveal'){
+        if(m.qIndex < m.qCount-1) await openQuestion(m.qIndex+1);
+        else await roomRef(live.pin,'meta').update({ phase:'final' });
+      }
+    }catch(e){ console.error(e); toast('Error al avanzar'); }
+    finally{ live.busy=false; }
+  }
+  async function openQuestion(i){
+    const q=live.questions[i];
+    live.countSent=0;
+    await roomRef(live.pin).update({
+      'meta/phase':'question', 'meta/qIndex':i, 'meta/start':TS(), 'meta/reveal':null,
+      'meta/question':{ text:q.text, answers:q.answers||[], time:q.time||0 },   // la correcta NO se publica
+      'count':0
+    });
+  }
+  async function revealQuestion(){
+    const m=live.raw.meta, qi=m.qIndex, q=live.questions[qi], mode=m.mode;
+    const [aS,sS]=await Promise.all([ roomRef(live.pin,'answers/'+qi).get(), roomRef(live.pin,'scores').get() ]);
+    const ans=aS.val()||{}, prev=sS.val()||{};
+    const counts=(q.answers||[]).map(()=>0);
+    const limit=(q.time||0)*1000;
+    const upd={};
+    Object.entries(ans).forEach(([id,a])=>{
+      if(!a || !Number.isInteger(a.a) || a.a<0 || a.a>=counts.length) return;
+      const el=a.t - m.start;
+      if(limit && el>limit+1500) return;              // fuera de tiempo
+      counts[a.a]++;
+      if(!isVote(mode) && a.a===q.correct){            // mismo puntaje que el modo local
+        const frac = limit ? Math.max(0,(limit-el)/limit) : 1;
+        upd['scores/'+id]=(prev[id]||0) + 600 + Math.round(400*frac);
+      }
+    });
+    upd['meta/phase']='reveal';
+    upd['meta/reveal']={ counts, correct:isVote(mode)?-1:q.correct };
+    await roomRef(live.pin).update(upd);
   }
   async function hostEnd(){
     if(!confirm('¿Terminar la partida para todos?')) return;
-    try{ await apiPost({action:'endSession', adminKey, pin:live.pin}); }catch(e){}
-    clearHostSession();
-    resetLive(); renderAdminList(); go('admin');
+    const pin=live.pin;
+    resetLive();
+    try{ await fbReady(); await removeRoom(pin); }catch(e){}
+    clearHostSession(); renderAdminList(); go('admin');
   }
   function qrDataUrl(text){
     try{ const qr=qrcode(0,'M'); qr.addData(text); qr.make(); return qr.createDataURL(6,8); }
@@ -3504,8 +3717,11 @@ const App = (() => {
   }
   function renderHost(){
     const s=live.state; const box=$('screen-host'); if(!s){ box.innerHTML='<div class="waiting"><div class="spinner"></div></div>'; return; }
-    const head = `<div class="editor-head"><button class="iconbtn" onclick="App.hostEnd()">✕</button><h2>${esc(s.emoji)} ${esc(s.title)}</h2></div>`;
-    if(isVote(s.mode)){ renderPollHost(box, head, s); return; }
+    const isHost = live.role==='host';
+    const head = `<div class="editor-head"><button class="iconbtn" onclick="App.hostEnd()">✕</button><h2>${esc(s.emoji)} ${esc(s.title)}</h2>${isHost?'<button class="btn ghost proj-btn" onclick="App.openScreen()" title="Abrir la vista para el proyector">📺 Proyectar</button>':''}</div>`;
+    const projUrl = liveBaseUrl()+'?pantalla='+s.pin;
+    const projNote = isHost ? `<div class="center muted host-only">📺 Pantalla para proyectar (también desde otro equipo): <span style="word-break:break-all">${esc(projUrl)}</span></div>` : '';
+    if(isVote(s.mode)){ renderPollHost(box, head + (s.phase==='lobby'?projNote:''), s); return; }
     if(s.phase==='lobby'){
       const joinUrl = liveBaseUrl()+'?pin='+s.pin;
       const chips = (s.players||[]).map(p=>`<span class="pchip">${esc(p.name)}</span>`).join('') || '<span class="muted">Esperando jugadores…</span>';
@@ -3517,6 +3733,7 @@ const App = (() => {
           <div class="muted" style="font-size:13px">Escanea el QR o entra con el PIN en Trivitek</div>
           <div class="join-link">${esc(joinUrl)}</div>
         </div>
+        ${projNote}
         <div class="live-count">${(s.players||[]).length} jugador(es) conectado(s)</div>
         <div class="players-grid">${chips}</div>
         <div class="editor-foot live-host-foot">
@@ -3534,10 +3751,13 @@ const App = (() => {
         </div>
         <div class="big-q">${esc(q.text)}</div>
         <div class="answers">${(q.answers||[]).map((a,i)=>`<div class="answer c${i}"><span class="shape">${SHAPES[i]}</span><span>${esc(a)}</span></div>`).join('')}</div>
+        <div class="center" style="margin-top:12px"><span class="answered-count" id="host-answered"></span></div>
+        ${(isHost && live.questions && live.questions[s.qIndex] && live.questions[s.qIndex].correct>=0) ? (()=>{ const c=live.questions[s.qIndex].correct; return `<div class="center host-only">🔒 Solo en tu pantalla · correcta: <b>${SHAPES[c]||''} ${esc((q.answers||[])[c]||'')}</b></div>`; })() : ''}
         <div class="editor-foot live-host-foot">
           <button class="btn alt" style="width:100%;font-size:20px" onclick="App.hostAdvance()">Mostrar respuesta →</button>
         </div>`;
       startHostTick(q.time, s.remaining);
+      updateHostAnswered();
       return;
     }
     if(s.phase==='reveal'){
@@ -3654,62 +3874,100 @@ const App = (() => {
 
   /* ---------- JUGADOR ---------- */
   async function joinEntry(prefillPin){
-    if(!cloud()){ toast('El modo en vivo necesita el backend configurado'); return; }
     if(prefillPin){
       // si es una votación anónima, entra directo sin pedir nombre
       try{
-        live.pin=prefillPin; const s=await fetchSession();
-        if(s.ok && isVote(s.mode)){ enterPoll(prefillPin, s); return; }
+        await fbReady();
+        const m=(await roomRef(prefillPin,'meta').get()).val();
+        if(m && isVote(m.mode)){ enterPoll(prefillPin); return; }
       }catch(e){}
     }
     $('join-pin').value = prefillPin||''; $('join-name').value='';
     go('join'); setTimeout(()=>$( prefillPin?'join-name':'join-pin').focus(),100);
   }
-  function enterPoll(pin, s){
-    resetLive(); live.role='player'; live.pin=pin; live.voter=voterToken(pin); live.state=s;
+  function enterPoll(pin){
+    resetLive(); live.role='player'; live.pin=pin; live.voter=fbUid;
     go('live'); renderPlayer();
-    live.poll = setInterval(playerTick, 1800);
+    subscribePlayer(pin, false);
   }
   async function joinGame(){
-    const pin=$('join-pin').value.trim();
+    const pin=$('join-pin').value.replace(/\D/g,'');
     if(pin.length<4){ toast('Escribe el PIN'); return; }
-    let s;
-    try{ live.pin=pin; s=await fetchSession(); }catch(e){ toast('Error de conexión'); return; }
-    if(!s.ok){ toast(s.error||'PIN no encontrado'); return; }
-    if(isVote(s.mode)){ enterPoll(pin, s); return; }   // votación/encuesta anónima: sin nombre
-    const name=$('join-name').value.trim();
+    let m;
+    try{ await fbReady(); m=(await roomRef(pin,'meta').get()).val(); }catch(e){ toast('Error de conexión'); return; }
+    if(!m){ toast('PIN no encontrado'); return; }
+    if(isVote(m.mode)){ enterPoll(pin); return; }   // votación/encuesta anónima: sin nombre
+    if(m.phase==='final'){ toast('Esa partida ya terminó'); return; }
+    const name=$('join-name').value.trim().slice(0,20);
     if(!name){ toast('Escribe tu nombre'); $('join-name').focus(); return; }
     try{
-      const r = await apiPost({action:'join', pin, name});
-      if(!r.ok){ toast(r.error||'No se pudo unir'); return; }
-      resetLive(); live.role='player'; live.pin=pin; live.name=r.name;
+      // evita nombres repetidos agregando un número
+      const ps=(await roomRef(pin,'players').get()).val()||{};
+      const taken=new Set(Object.entries(ps).filter(([id])=>id!==fbUid).map(([,p])=>String(p.name||'').toLowerCase()));
+      let finalName=name, n=2;
+      while(taken.has(finalName.toLowerCase())){ finalName=name.slice(0,17)+' '+n; n++; }
+      await roomRef(pin,'players/'+fbUid).set({ name:finalName, online:true });
+      resetLive(); live.role='player'; live.pin=pin; live.name=finalName; live.uid=fbUid;
       go('live'); renderPlayer();
-      live.poll = setInterval(playerTick, 1800);
-    }catch(e){ toast('Error de conexión'); }
+      subscribePlayer(pin, true);
+    }catch(e){ console.error(e); toast('No se pudo unir'); }
   }
-  async function playerTick(){
-    try{ const s=await fetchSession(); if(!s.ok){ return; }
-      const key = s.phase+':'+s.qIndex;
-      const changed = key!==live.lastPhaseKey;
-      if(changed){ live.lastPhaseKey=key; if(s.phase==='question') live.answered=false; }
-      live.state=s;
-      if(changed) renderPlayer();   // solo redibuja al cambiar de fase, no reinicia la selección
-    }catch(e){}
+  function subscribePlayer(pin, withPresence){
+    live.raw={};
+    if(withPresence){
+      listen(fbDb.ref('.info/connected'), s=>{
+        if(!s.val() || live.pin!==pin) return;
+        const r=roomRef(pin,'players/'+fbUid+'/online');
+        r.onDisconnect().set(false); r.set(true).catch(()=>{});
+      });
+      listen(roomRef(pin,'players'), s=>{ live.raw.players=s.val()||{}; playerUpdate(); });
+      listen(roomRef(pin,'scores'),  s=>{ live.raw.scores=s.val()||{};  playerUpdate(); });
+    }
+    listen(roomRef(pin,'meta'), s=>{
+      const m=s.val();
+      if(!m){ resetLive(); toast('La sala fue cerrada'); go('home'); return; }
+      live.raw.meta=m; playerUpdate();
+    });
+  }
+  function playerUpdate(){
+    const s=buildState(); if(!s) return;
+    const key = s.phase+':'+s.qIndex;
+    const changed = key!==live.lastPhaseKey;
+    if(changed){ live.lastPhaseKey=key; if(s.phase==='question'){ live.answered=false; checkAlreadyAnswered(s); } }
+    live.state=s;
+    // en "pregunta" solo redibuja al cambiar de fase (no reinicia la selección)
+    if(changed || s.phase==='lobby' || s.phase==='reveal' || s.phase==='final') renderPlayer();
+  }
+  function checkAlreadyAnswered(s){
+    if(isVote(s.mode)) return;
+    const qi=s.qIndex;
+    roomRef(live.pin,'answers/'+qi+'/'+fbUid).get().then(x=>{
+      if(x.exists() && live.state && live.state.qIndex===qi && live.state.phase==='question' && !live.answered){ live.answered=true; renderPlayer(); }
+    }).catch(()=>{});
   }
   async function submitLiveAnswer(choice){
-    if(live.answered) return; live.answered=true; renderPlayer();
-    try{ await apiPost({action:'answer', pin:live.pin, name:live.name, choice}); }catch(e){ toast('No se pudo enviar'); }
+    if(live.answered) return;
+    const s=live.state, m=live.raw.meta;
+    if(!s || s.phase!=='question') return;
+    if(s.question && s.question.time && (m.start + s.question.time*1000 - fbNow())<=0){ toast('Se acabó el tiempo'); return; }
+    live.answered=true; renderPlayer();
+    try{ await roomRef(live.pin,'answers/'+s.qIndex+'/'+fbUid).set({ a:choice, t:TS() }); }
+    catch(e){ toast('No se pudo enviar'); }
   }
   async function submitPollVote(choice){
     const pin=live.pin, qi=live.state.qIndex;
     if(getVoted(pin,qi)!=null) return;
     setVoted(pin,qi,choice); renderPlayer();   // optimista
-    try{
-      const r=await apiPost({action:'answer', pin, name:live.voter, voter:live.voter, choice});
-      if(!r.ok && !r.already) toast(r.error||'No se pudo votar');
-    }catch(e){ toast('Sin conexión: no se registró el voto'); }
+    try{ await roomRef(pin,'answers/'+qi+'/'+fbUid).set({ a:choice, t:TS() }); }
+    catch(e){ toast('No se registró el voto (¿ya habías votado?)'); }
   }
-  function leaveLive(){ resetLive(); go('home'); }
+  function leaveLive(){
+    if(live.role==='player' && live.name && fbDb){
+      const r=roomRef(live.pin,'players/'+fbUid+'/online');
+      r.onDisconnect().cancel(); r.set(false).catch(()=>{});
+    }
+    resetLive(); go('home');
+  }
   function renderPollPlayer(box, head, s){
     if(s.phase==='lobby'){
       box.innerHTML=head+`<div class="waiting"><div class="spinner"></div>
@@ -3788,8 +4046,8 @@ const App = (() => {
         banner='La respuesta correcta era:'; 
       }
       const q=s.question||{};
-      const me=(s.players||[]).find(p=>p.name===live.name);
-      const rank=(s.players||[]).slice().sort((a,b)=>b.score-a.score).findIndex(p=>p.name===live.name)+1;
+      const me=(s.players||[]).find(p=>p.id===live.uid);
+      const rank=(s.players||[]).slice().sort((a,b)=>b.score-a.score).findIndex(p=>p.id===live.uid)+1;
       const opts=(q.answers||[]).map((a,i)=>{
         const win=(s.mode!=='survey'&&i===rv.correct);
         return `<div class="answer c${i} ${win?'win':'dim'}"><span class="shape">${SHAPES[i]}</span><span>${esc(a)}</span>${win?'<span style="margin-left:auto">✅</span>':''}</div>`;
@@ -3803,8 +4061,8 @@ const App = (() => {
       stopLive();
       if(s.mode==='survey'){ box.innerHTML=head+`<div class="waiting"><div class="display" style="font-size:26px">🎉 ¡Gracias por votar!</div></div>`; return; }
       const sorted=(s.players||[]).slice().sort((a,b)=>b.score-a.score);
-      const rank=sorted.findIndex(p=>p.name===live.name)+1;
-      const me=sorted.find(p=>p.name===live.name);
+      const rank=sorted.findIndex(p=>p.id===live.uid)+1;
+      const me=sorted.find(p=>p.id===live.uid);
       box.innerHTML=head+finalHtml(s)+`<div class="answered-note" style="display:block;margin-top:8px">${esc(live.name)}: lugar ${rank} de ${sorted.length}${me?` · ${me.score} pts`:''}</div>`;
       return;
     }
@@ -3816,7 +4074,7 @@ const App = (() => {
            nextQuestion, afterReveal, replay,
            adminEntry, adminLogin, adminLogout, changePinPrompt, editorBack,
            exportAll, deleteQuiz, duplicateQuiz,
-           hostStart, hostAdvance, hostEnd, joinEntry, joinGame, leaveLive };
+           hostStart, hostAdvance, hostEnd, joinEntry, joinGame, leaveLive, openScreen };
 })();
 
 App.init();
