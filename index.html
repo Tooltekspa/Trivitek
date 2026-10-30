@@ -6,6 +6,10 @@
 <title>Trivitek — Encuestas y preguntas divertidas | Tooltek</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+<link rel="preconnect" href="https://trivitek-1f131-default-rtdb.firebaseio.com">
+<link rel="preconnect" href="https://identitytoolkit.googleapis.com">
+<link rel="preconnect" href="https://securetoken.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
   :root{
@@ -2828,6 +2832,18 @@ const App = (() => {
   /* ---------- init ---------- */
   async function init(){
     buildBg();
+    // QR / link directo: entra al juego AL INSTANTE, sin esperar a Apps Script
+    // (los jugadores y el proyector no necesitan la lista de quizzes)
+    let params=null; try{ params=new URLSearchParams(location.search); }catch(e){}
+    const scr = params && params.get('pantalla');
+    const pinParam = params && params.get('pin');
+    fbReady().catch(()=>{});            // conecta a Firebase en paralelo desde ya
+    if(scr || pinParam){
+      state.quizzes = load() || [];
+      if(scr) enterScreen(scr); else joinEntry(pinParam);
+      if(cloud()) refreshFromCloud();   // la biblioteca se carga después, en segundo plano
+      return;
+    }
     if(cloud()){
       try{
         state.quizzes = await apiList();
@@ -2839,14 +2855,6 @@ const App = (() => {
       state.quizzes = load() || samples();
     }
     renderLibrary();
-    // deep-link: ?pin=XXXXXX abre la pantalla de unirse
-    try{
-      const params = new URLSearchParams(location.search);
-      const scr = params.get('pantalla');
-      if(scr){ enterScreen(scr); return; }
-      const pin = params.get('pin');
-      if(pin){ joinEntry(pin); return; }
-    }catch(e){}
     // reanudar sesión de host si la página se cerró con una votación/partida activa
     if(cloud()) tryResumeHost();
   }
@@ -3540,6 +3548,7 @@ const App = (() => {
   async function hostStart(quizId){
     const quiz=state.quizzes.find(x=>x.id===quizId);
     if(!quiz || !(quiz.questions||[]).length){ toast('Este quiz no tiene preguntas'); return; }
+    const scrWin = preOpenScreen();   // se abre en el mismo clic para que el navegador no la bloquee
     toast('Creando sala…');
     try{
       await fbReady();
@@ -3562,19 +3571,22 @@ const App = (() => {
       await fbDb.ref('hosts/'+fbUid+'/'+pin).set(true);
       try{localStorage.setItem('trivitek_host_session', JSON.stringify({pin, ts:Date.now()}));}catch(e){}
       enterHost(pin, questions);
-    }catch(e){ console.error(e); toast(e.message||'Error de conexión'); }
+      pointScreen(scrWin, pin);
+    }catch(e){ console.error(e); closeScreen(scrWin); toast(e.message||'Error de conexión'); }
   }
   /* reanudar una sesión de host tras recargar/cerrar la página */
   async function resumeHost(pin){
+    const scrWin = preOpenScreen();
     try{
       await fbReady();
       const host=(await roomRef(pin,'host').get()).val();
-      if(!host){ toast('Esa sala ya no existe'); clearHostSession(); return; }
-      if(host!==fbUid){ toast('Esa sala se abrió en otro equipo'); return; }
+      if(!host){ closeScreen(scrWin); toast('Esa sala ya no existe'); clearHostSession(); return; }
+      if(host!==fbUid){ closeScreen(scrWin); toast('Esa sala se abrió en otro equipo'); return; }
       const sec=(await roomRef(pin,'secret').get()).val();
       enterHost(pin, (sec&&sec.questions)||[]);
+      pointScreen(scrWin, pin);
       toast('Sesión reanudada · PIN '+pin+' ✅');
-    }catch(e){ console.error(e); toast('No se pudo retomar la sala'); }
+    }catch(e){ console.error(e); closeScreen(scrWin); toast('No se pudo retomar la sala'); }
   }
   function clearHostSession(){ try{localStorage.removeItem('trivitek_host_session');}catch(e){} }
   function enterHost(pin, questions){
@@ -3616,6 +3628,31 @@ const App = (() => {
     const w=window.open(url,'trivitek_pantalla');
     if(!w) toast('Permite ventanas emergentes o abre: '+url);
   }
+  /* abre la ventana del proyector en el mismo clic (con "Preparando…") */
+  function preOpenScreen(){
+    let w=null;
+    try{
+      w=window.open('', 'trivitek_pantalla');
+      if(w && w.document && w.location.href==='about:blank'){
+        w.document.title='Trivitek · Pantalla';
+        w.document.body.style.cssText='margin:0;height:100vh;display:grid;place-items:center;background:#0c3553;color:#fff;font:700 32px system-ui,sans-serif';
+        w.document.body.textContent='📺 Preparando la pantalla…';
+      }
+    }catch(e){}
+    return w;
+  }
+  /* cuando la sala está lista, lleva la ventana al juego y vuelve el foco al admin */
+  function pointScreen(w, pin){
+    const url=liveBaseUrl()+'?pantalla='+pin;
+    if(w && !w.closed){
+      try{ w.location.href=url; }catch(e){ openScreen(); return; }
+      try{ window.focus(); }catch(e){}
+      toast('📺 Pantalla abierta: muévela al proyector y presiona F11');
+    } else {
+      toast('El navegador bloqueó la ventana: usa el botón 📺 Proyectar');
+    }
+  }
+  function closeScreen(w){ try{ if(w && !w.closed && w.location.href==='about:blank') w.close(); }catch(e){} }
   async function enterScreen(pin){
     document.body.classList.add('projector');
     resetLive(); live.role='screen'; live.pin=String(pin);
@@ -3874,16 +3911,17 @@ const App = (() => {
 
   /* ---------- JUGADOR ---------- */
   async function joinEntry(prefillPin){
+    // muestra la pantalla para unirse de inmediato
+    $('join-pin').value = prefillPin||''; $('join-name').value='';
+    go('join'); setTimeout(()=>$( prefillPin?'join-name':'join-pin').focus(),100);
     if(prefillPin){
-      // si es una votación anónima, entra directo sin pedir nombre
+      // en paralelo: si es una votación anónima, entra directo sin pedir nombre
       try{
         await fbReady();
         const m=(await roomRef(prefillPin,'meta').get()).val();
-        if(m && isVote(m.mode)){ enterPoll(prefillPin); return; }
+        if(m && isVote(m.mode) && !live.role && $('screen-join').classList.contains('active')){ enterPoll(prefillPin); }
       }catch(e){}
     }
-    $('join-pin').value = prefillPin||''; $('join-name').value='';
-    go('join'); setTimeout(()=>$( prefillPin?'join-name':'join-pin').focus(),100);
   }
   function enterPoll(pin){
     resetLive(); live.role='player'; live.pin=pin; live.voter=fbUid;
